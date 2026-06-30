@@ -14,6 +14,25 @@ from typing import Dict, List, Optional
 from . import config
 
 
+def load_tickers_file(path) -> List[str]:
+    """Read tickers from a plain-text file (one symbol per line).
+
+    Blank lines and ``#`` comments are ignored, symbols are upper-cased and
+    de-duplicated while preserving order. This is the format used for the
+    repo-committed watchlist that drives the published dashboard, because it
+    is trivial to edit from the GitHub website on a phone.
+    """
+    tickers: List[str] = []
+    seen = set()
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            symbol = line.split("#", 1)[0].strip().upper()
+            if symbol and symbol not in seen:
+                seen.add(symbol)
+                tickers.append(symbol)
+    return tickers
+
+
 class Watchlist:
     """An ordered collection of ticker symbols with optional notes."""
 

@@ -1,0 +1,14 @@
+# StockSync watchlist — one ticker per line.
+#
+# Edit this file (you can do it straight from the GitHub website/app on your
+# phone: tap the pencil icon, change the list, then "Commit changes").
+# Every commit rebuilds the dashboard and republishes it to GitHub Pages.
+#
+# Blank lines and anything after a '#' are ignored.
+
+AAPL
+MSFT
+NVDA
+GOOGL
+AMZN
+TSLA

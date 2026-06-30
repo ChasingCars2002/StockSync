@@ -74,3 +74,30 @@ def test_dashboard_empty_watchlist(monkeypatch, tmp_path, capsys):
     setup_env(monkeypatch, tmp_path)
     assert cli.main(["dashboard"]) == 0
     assert "empty" in capsys.readouterr().out
+
+
+def test_export_writes_html(monkeypatch, tmp_path):
+    setup_env(monkeypatch, tmp_path)
+    out = tmp_path / "site" / "index.html"
+    rc = cli.main(["export", "--tickers", "AAPL", "MSFT", "--output", str(out)])
+    assert rc == 0
+    assert out.exists()
+    page = out.read_text()
+    assert "<!DOCTYPE html>" in page
+    assert "AAPL" in page and "MSFT" in page
+
+
+def test_export_from_watchlist_file(monkeypatch, tmp_path):
+    setup_env(monkeypatch, tmp_path)
+    wl_file = tmp_path / "wl.txt"
+    wl_file.write_text("AAPL\n# note\nMSFT\n")
+    out = tmp_path / "index.html"
+    rc = cli.main(["export", "--watchlist-file", str(wl_file), "--output", str(out)])
+    assert rc == 0
+    assert "AAPL" in out.read_text()
+
+
+def test_export_no_tickers_errors(monkeypatch, tmp_path):
+    setup_env(monkeypatch, tmp_path)
+    rc = cli.main(["export", "--output", str(tmp_path / "i.html")])
+    assert rc == 1

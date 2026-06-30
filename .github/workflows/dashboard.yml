@@ -1,0 +1,68 @@
+name: Build & publish dashboard
+
+# Builds the StockSync watchlist dashboard and publishes it to GitHub Pages.
+# Open the published URL on your phone; edit watchlist.txt to change tickers.
+
+on:
+  # Rebuild whenever the watchlist or the code changes.
+  push:
+    branches: [claude/stock-watchlist-news-1e3qwd]
+    paths:
+      - watchlist.txt
+      - "stocksync/**"
+      - .github/workflows/dashboard.yml
+  # Refresh on a schedule (weekdays, ~30 min after the US market opens; cron is UTC).
+  schedule:
+    - cron: "0 14 * * 1-5"
+  # Allow a manual run from the Actions tab (works from the GitHub mobile site too).
+  workflow_dispatch:
+
+# Permissions required to deploy to GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; newer runs supersede in-progress ones.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install StockSync
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Build dashboard
+        # --no-cache so each scheduled run fetches fresh data.
+        run: |
+          python -m stocksync --no-cache export \
+            --watchlist-file watchlist.txt \
+            --output public/index.html \
+            --title "StockSync Watchlist"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

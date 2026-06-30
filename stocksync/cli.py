@@ -19,9 +19,9 @@ import argparse
 import sys
 from typing import List, Optional
 
-from . import brain, report
+from . import brain, report, webreport
 from .providers import FinvizProvider
-from .watchlist import Watchlist
+from .watchlist import Watchlist, load_tickers_file
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -54,6 +54,21 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "dashboard", aliases=["dash"], help="ranked dashboard of every watchlist ticker"
     )
+
+    p_export = sub.add_parser(
+        "export", help="render a mobile-friendly HTML dashboard (e.g. for GitHub Pages)"
+    )
+    p_export.add_argument(
+        "--output", "-o", default="public/index.html", help="output HTML path"
+    )
+    p_export.add_argument(
+        "--watchlist-file",
+        help="plain-text file of tickers (one per line); defaults to the saved watchlist",
+    )
+    p_export.add_argument(
+        "--tickers", nargs="+", help="explicit tickers to include (overrides watchlist)"
+    )
+    p_export.add_argument("--title", default="StockSync", help="page title")
 
     return parser
 
@@ -133,6 +148,46 @@ def _cmd_dashboard(args, wl: Watchlist, provider: FinvizProvider, color: bool) -
     return 0
 
 
+def _resolve_export_tickers(args, wl: Watchlist) -> List[str]:
+    if args.tickers:
+        return [t.upper().strip() for t in args.tickers]
+    if args.watchlist_file:
+        return load_tickers_file(args.watchlist_file)
+    return wl.tickers
+
+
+def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
+    import os
+    from datetime import datetime, timezone
+
+    tickers = _resolve_export_tickers(args, wl)
+    if not tickers:
+        print("No tickers to export. Provide --tickers, --watchlist-file, or add some.", file=sys.stderr)
+        return 1
+
+    entries = []
+    skipped = []
+    for ticker in tickers:
+        data = provider.fetch(ticker, use_cache=not args.no_cache)
+        if data.ok:
+            entries.append((brain.analyze(data), data))
+        else:
+            skipped.append(ticker)
+            print(f"  (skipped {ticker}: no data)", file=sys.stderr)
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    page = webreport.render_html(
+        entries, generated_at=generated_at, title=args.title, skipped=skipped
+    )
+
+    out_dir = os.path.dirname(os.path.abspath(args.output))
+    os.makedirs(out_dir, exist_ok=True)
+    with open(args.output, "w", encoding="utf-8") as fh:
+        fh.write(page)
+    print(f"Wrote {args.output} ({len(entries)} tickers, {len(skipped)} skipped).")
+    return 0 if entries else 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -154,6 +209,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_news(args, provider, color)
     if args.command in ("dashboard", "dash"):
         return _cmd_dashboard(args, wl, provider, color)
+    if args.command == "export":
+        return _cmd_export(args, wl, provider)
 
     parser.error(f"unknown command: {args.command}")
     return 2  # pragma: no cover

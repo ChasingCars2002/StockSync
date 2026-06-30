@@ -74,6 +74,9 @@ stocksync news TSLA -n 8
 
 # Ranked dashboard of the whole watchlist
 stocksync dashboard
+
+# Export a mobile-friendly HTML dashboard (used by GitHub Pages; see below)
+stocksync export --output public/index.html
 ```
 
 Global flags:
@@ -82,6 +85,35 @@ Global flags:
 - `--no-cache` — bypass the local cache and fetch fresh data.
 
 You can also run it as a module: `python -m stocksync ...`.
+
+## Run it on your phone (GitHub Pages)
+
+StockSync can publish a mobile-friendly dashboard to **GitHub Pages** and keep
+it refreshed with **GitHub Actions** — so you just open one URL on your phone.
+
+The included workflow (`.github/workflows/dashboard.yml`):
+
+- reads tickers from [`watchlist.txt`](watchlist.txt),
+- builds `public/index.html` with `stocksync export`,
+- deploys it to GitHub Pages,
+- and re-runs on every push to `watchlist.txt`, on a weekday schedule, and on
+  demand from the Actions tab.
+
+**One-time setup:** in the repo, go to **Settings → Pages → Build and
+deployment → Source** and choose **GitHub Actions**. Then run the workflow once
+(Actions tab → *Build & publish dashboard* → *Run workflow*). Your dashboard
+will be at `https://<your-username>.github.io/StockSync/`.
+
+**Day to day:** edit `watchlist.txt` straight from the GitHub website/app on
+your phone (pencil icon → change tickers → *Commit changes*). The page rebuilds
+automatically. GitHub's runners can reach Finviz, so the data is live.
+
+You can also generate the page locally:
+
+```bash
+stocksync export --watchlist-file watchlist.txt --output public/index.html
+open public/index.html
+```
 
 ## Configuration
 
@@ -138,7 +170,10 @@ stocksync/
   watchlist.py   # persistent ticker list with notes
   brain.py       # scoring engine: dimensions, signals, news, verdict
   report.py      # terminal rendering (colour-optional, no deps)
+  webreport.py   # self-contained mobile HTML dashboard (GitHub Pages)
   cli.py         # argparse command-line interface
+.github/workflows/dashboard.yml  # build + publish to GitHub Pages
+watchlist.txt    # repo-committed tickers driving the published dashboard
 tests/           # full pytest suite (no network required)
 ```
 
