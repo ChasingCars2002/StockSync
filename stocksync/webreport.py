@@ -207,11 +207,21 @@ def _market_recs_section(analyses: Optional[List[Analysis]]) -> str:
     if not analyses:
         return '<p class="muted">No strong off-watchlist setups right now.</p>'
 
+    # Momentum-ish signals are de-emphasised in the "why" so reasons reflect
+    # the fundamental/analyst case, not just price action.
+    momentum_words = ("52-week", "200-day", "Oversold", "Overbought")
+
     rows = []
     for a in analyses:
-        cls = _score_class(a.composite)
-        score = "n/a" if a.composite is None else f"{a.composite:.0f}"
-        why = " · ".join(s.text for s in a.signals if s.sentiment == "bullish")[:80]
+        rank_score = a.quality_score if a.quality_score is not None else a.composite
+        cls = _score_class(rank_score)
+        score = "n/a" if rank_score is None else f"{rank_score:.0f}"
+        reasons = [
+            s.text
+            for s in a.signals
+            if s.sentiment == "bullish" and not any(w in s.text for w in momentum_words)
+        ]
+        why = (" · ".join(reasons))[:80]
         company = _esc(a.company)[:28]
         tkr = _esc(a.ticker)
         rows.append(
@@ -675,7 +685,7 @@ def render_html(
 </section>
 
 <section id="panel-insights" class="panel">
-  <h2 class="section">Recommendations <span class="muted">(off your watchlist)</span></h2>
+  <h2 class="section">Recommendations <span class="muted">(off your watchlist · fundamentals &amp; analysts, momentum excluded)</span></h2>
   {market_rec_html}
   <h2 class="section">Top 10 market news</h2>
   {top_news_html}

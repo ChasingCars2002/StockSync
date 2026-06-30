@@ -87,6 +87,36 @@ def test_news_sentiment_empty_is_neutral():
     assert s.headlines_scored == 0
 
 
+def test_quality_score_excludes_momentum():
+    # A stock with weak fundamentals but a huge up-day should NOT earn a high
+    # quality score even though its momentum/composite get a boost.
+    hot_but_weak = {
+        "Ticker": "HOT",
+        "Price": "10.00",
+        "Change": "25.00%",
+        "P/E": "200.00",          # very expensive
+        "PEG": "8.00",
+        "Profit Margin": "-20.00%",  # unprofitable
+        "ROE": "-10.00%",
+        "EPS next 5Y": "-5.00%",
+        "Recom": "3.50",
+        "RSI (14)": "85.00",      # screaming momentum
+        "SMA200": "60.00%",       # far above the 200-day
+        "Perf Year": "300.00%",
+        "Debt/Eq": "5.00",
+    }
+    a = analyze(make_data(hot_but_weak))
+    mom = a.dimension("Momentum")
+    assert mom is not None and mom.available and mom.score >= 70  # momentum is hot
+    assert a.quality_score is not None
+    assert a.quality_score < 40  # but quality (momentum-excluded) is poor
+
+
+def test_quality_score_high_for_strong_fundamentals():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    assert a.quality_score is not None and a.quality_score >= 50
+
+
 def test_verdict_thresholds():
     good = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
     assert good.verdict in {"Strong", "Favorable", "Neutral / Mixed"}

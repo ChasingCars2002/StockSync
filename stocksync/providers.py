@@ -98,6 +98,14 @@ def _default_screener(signal: str, limit: int) -> List[Dict[str, str]]:
     return list(screen)[:limit]
 
 
+def _default_filter_screener(filters: List[str], order: str, limit: int) -> List[Dict[str, str]]:
+    """Run a Finviz screener for a set of fundamental/technical filters."""
+    from finviz.screener import Screener
+
+    screen = Screener(filters=list(filters), order=order)
+    return list(screen)[:limit]
+
+
 def _normalize_news_row(row) -> Dict[str, str]:
     """Reduce a Finviz market-news row to a uniform dict."""
     seq = list(row)
@@ -132,6 +140,7 @@ class FinvizProvider:
         get_analyst_price_targets: Optional[RatingsFetcher] = None,
         get_insider: Optional[InsiderFetcher] = None,
         get_screener: Optional[ScreenerFetcher] = None,
+        get_filter_screener: Optional[Callable[[List[str], str, int], List[Dict[str, str]]]] = None,
         get_all_news: Optional[Callable[[], List]] = None,
         cache_path: Optional[Path] = None,
         ttl_seconds: Optional[int] = None,
@@ -142,6 +151,7 @@ class FinvizProvider:
         self._get_ratings = get_analyst_price_targets
         self._get_insider = get_insider
         self._get_screener = get_screener
+        self._get_filter_screener = get_filter_screener
         self._get_all_news = get_all_news
         self._cache_path = Path(cache_path) if cache_path is not None else config.cache_path()
         self._ttl = config.CACHE_TTL_SECONDS if ttl_seconds is None else ttl_seconds
@@ -263,6 +273,47 @@ class FinvizProvider:
                 self._cache[key] = {"rows": rows, "fetched_at": self._clock()}
                 self._save_cache()
             except Exception:  # noqa: BLE001 - movers are best-effort
+                rows = []
+
+        filtered = [r for r in rows if r.get("ticker") and r["ticker"] not in exclude_set]
+        return filtered[:limit]
+
+    def fetch_screen(
+        self,
+        filters: List[str],
+        *,
+        order: str = "",
+        limit: int = 10,
+        exclude: Optional[List[str]] = None,
+        use_cache: bool = True,
+    ) -> List[Dict[str, str]]:
+        """Return normalized rows for a filter-based Finviz screen.
+
+        *filters* are Finviz filter codes (e.g. ``"fa_peg_u1"``). Used to build
+        a fundamentally-screened candidate universe. Degrades to an empty list
+        on failure.
+        """
+        exclude_set = {t.upper() for t in (exclude or [])}
+        key = "@screen:" + ",".join(filters) + "|" + order
+
+        rows: Optional[List[Dict[str, str]]] = None
+        if use_cache:
+            entry = self._cache.get(key)
+            if entry and (self._clock() - entry.get("fetched_at", 0.0)) <= self._ttl:
+                rows = entry.get("rows")
+
+        if rows is None:
+            fetcher = (
+                self._get_filter_screener
+                if self._get_filter_screener is not None
+                else _default_filter_screener
+            )
+            try:
+                raw = fetcher(filters, order, limit + len(exclude_set) + 5)
+                rows = [_normalize_screener_row(r) for r in raw]
+                self._cache[key] = {"rows": rows, "fetched_at": self._clock()}
+                self._save_cache()
+            except Exception:  # noqa: BLE001 - best-effort
                 rows = []
 
         filtered = [r for r in rows if r.get("ticker") and r["ticker"] not in exclude_set]

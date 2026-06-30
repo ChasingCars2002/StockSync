@@ -136,6 +136,30 @@ def test_fetch_movers_caches(cache_file):
     assert calls["n"] == 1  # second call served from cache
 
 
+def test_fetch_screen_filters_and_excludes(cache_file):
+    captured = {}
+
+    def screener(filters, order, limit):
+        captured["filters"] = filters
+        return [
+            {"Ticker": "ABC", "Company": "Alpha", "Price": "20", "Change": "1%"},
+            {"Ticker": "MSFT", "Company": "Microsoft", "Price": "400", "Change": "1%"},
+        ]
+
+    provider = FinvizProvider(get_filter_screener=screener, cache_path=cache_file)
+    rows = provider.fetch_screen(["fa_peg_u1", "fa_roe_o15"], exclude=["MSFT"])
+    assert captured["filters"] == ["fa_peg_u1", "fa_roe_o15"]
+    assert [r["ticker"] for r in rows] == ["ABC"]  # MSFT excluded
+
+
+def test_fetch_screen_failure_is_empty(cache_file):
+    def boom(filters, order, limit):
+        raise RuntimeError("screen down")
+
+    provider = FinvizProvider(get_filter_screener=boom, cache_path=cache_file)
+    assert provider.fetch_screen(["fa_peg_u1"]) == []
+
+
 def test_fetch_market_news_normalizes_and_limits(cache_file):
     raw = [
         ("09:00AM", "Markets rally on rate-cut hopes", "https://n/1", "Reuters"),

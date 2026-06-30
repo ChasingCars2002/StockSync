@@ -125,6 +125,23 @@ DEFAULT_MOVER_SIGNALS = [
     ("Unusual volume", "ta_unusualvolume"),
 ]
 
+# Candidate sources for off-watchlist *recommendations*. These are fundamental
+# / analyst screens (not daily movers), so recommendations are grounded in
+# quality rather than "what popped today". All include liquidity (avg vol >
+# 500K) and price (> $5) filters to cut penny-stock noise. Failures or unknown
+# filter codes simply yield no candidates (we fall back to movers below).
+REC_SCREENS = [
+    # Analysts rate it Buy or better, with real liquidity.
+    ["an_recom_buybetter", "sh_avgvol_o500", "sh_price_o5"],
+    # Quality value: profitable, PEG < 1, strong returns on equity.
+    ["fa_pe_profitable", "fa_peg_u1", "fa_roe_o15", "sh_avgvol_o500", "sh_price_o5"],
+    # Profitable growth: EPS growth this year > 20%, positive margins, good ROE.
+    ["fa_epsyoy_o20", "fa_netmargin_pos", "fa_roe_o15", "sh_avgvol_o500", "sh_price_o5"],
+]
+
+# A recommendation must clear this momentum-excluded quality score.
+REC_QUALITY_MIN = 60.0
+
 
 def _provider(args: argparse.Namespace) -> FinvizProvider:
     return FinvizProvider()
@@ -238,18 +255,33 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
             )
             movers.append((title, rows))
 
-    # Brain-scored recommendations from off-watchlist movers: use the movers as
-    # a candidate pool, fully analyze each, and surface the highest scorers.
+    # Brain-scored recommendations from off-watchlist candidates. Candidates
+    # come from fundamental/analyst screens (not daily movers), and are then
+    # ranked and gated on a momentum-excluded quality score, so a stock cannot
+    # qualify merely because it had a big up-day.
     market_recs = None
-    if movers and not args.no_market_recs:
+    if not args.no_market_recs:
         seen = {t.upper() for t in tickers}
         pool = []
-        for _, rows in movers:
-            for r in rows:
+        for filters in REC_SCREENS:
+            for r in provider.fetch_screen(
+                filters, limit=args.rec_candidates, exclude=tickers, use_cache=not args.no_cache
+            ):
                 t = r.get("ticker", "")
                 if t and t not in seen:
                     seen.add(t)
                     pool.append(t)
+
+        # Fallback: if the screens yield nothing (e.g. Finviz unreachable),
+        # fall back to the movers pool so the section is not empty.
+        if not pool and movers:
+            for _, rows in movers:
+                for r in rows:
+                    t = r.get("ticker", "")
+                    if t and t not in seen:
+                        seen.add(t)
+                        pool.append(t)
+
         pool = pool[: args.rec_candidates]
 
         scored = []
@@ -257,11 +289,17 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
             d = provider.fetch(t, use_cache=not args.no_cache)
             if d.ok:
                 a = brain.analyze(d)
-                if a.composite is not None:
+                analyst = a.dimension("Analyst")
+                # Require a passing quality score, and don't recommend names
+                # analysts are actively negative on.
+                if (
+                    a.quality_score is not None
+                    and a.quality_score >= REC_QUALITY_MIN
+                    and not (analyst and analyst.available and analyst.score < 45)
+                ):
                     scored.append(a)
-        scored.sort(key=lambda a: a.composite, reverse=True)
-        # Only recommend names that score at least "Favorable".
-        market_recs = [a for a in scored if a.composite >= 55][: args.rec_limit]
+        scored.sort(key=lambda a: a.quality_score, reverse=True)
+        market_recs = scored[: args.rec_limit]
 
     # Top general market-news stories.
     market_news = None if args.no_market_news else provider.fetch_market_news(

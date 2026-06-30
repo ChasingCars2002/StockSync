@@ -109,9 +109,12 @@ The published page has two tabs:
 - **Watchlist** — a card per ticker, plus an **Add ticker** box and a **✕
   Remove** button on each card.
 - **Insights** —
-  - **Recommendations off your watchlist** — the brain scores the day's
-    market movers and surfaces the highest-scoring (Favorable+) names you
-    aren't already tracking, each with a quick-add button.
+  - **Recommendations off your watchlist** — candidates are drawn from
+    *fundamental/analyst screens* (analyst buy-or-better, quality-value,
+    profitable-growth; all liquidity- and price-filtered), then ranked and
+    gated on a **momentum-excluded quality score** so a stock can't qualify
+    just because it had a big up-day. Each rec shows its fundamental reasons
+    and a quick-add button.
   - **Top 10 market news** — Finviz's general market feed, numbered and
     sentiment-coloured.
   - **Market movers & trends off your watchlist** — top gainers, top losers,

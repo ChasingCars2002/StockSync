@@ -99,6 +99,8 @@ class Analysis:
     signals: List[Signal]
     news: NewsSentiment
     verdict: str
+    # Momentum-excluded score used to rank recommendations (None if no data).
+    quality_score: Optional[float] = None
     # A few raw display fields surfaced for convenient rendering.
     price: Optional[str] = None
     change: Optional[str] = None
@@ -244,18 +246,32 @@ _WEIGHTS = {
     "Financial Health": 0.15,
 }
 
+# Quality-tilted weights: Momentum is excluded entirely so a stock that merely
+# had a big day cannot rank as a strong recommendation on price action alone.
+# Used to score off-watchlist recommendation candidates.
+_QUALITY_WEIGHTS = {
+    "Valuation": 0.20,
+    "Profitability": 0.28,
+    "Growth": 0.18,
+    "Analyst": 0.18,
+    "Financial Health": 0.16,
+}
 
-def _composite(dimensions: List[DimensionScore]) -> Optional[float]:
+
+def _weighted(dimensions: List[DimensionScore], weights: Dict[str, float]) -> Optional[float]:
     num = 0.0
     den = 0.0
     for dim in dimensions:
-        if dim.available:
-            weight = _WEIGHTS.get(dim.name, 0.0)
-            num += dim.score * weight
-            den += weight
+        if dim.available and dim.name in weights:
+            num += dim.score * weights[dim.name]
+            den += weights[dim.name]
     if den == 0:
         return None
     return num / den
+
+
+def _composite(dimensions: List[DimensionScore]) -> Optional[float]:
+    return _weighted(dimensions, _WEIGHTS)
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +417,7 @@ def analyze(data: StockData) -> Analysis:
         _score_health(f),
     ]
     composite = _composite(dimensions)
+    quality = _weighted(dimensions, _QUALITY_WEIGHTS)
     news = score_news(data.news)
     signals = _signals(data, news)
     return Analysis(
@@ -411,6 +428,7 @@ def analyze(data: StockData) -> Analysis:
         signals=signals,
         news=news,
         verdict=_verdict(composite),
+        quality_score=quality,
         price=f.get("Price"),
         change=f.get("Change"),
         data_errors=list(data.errors),
