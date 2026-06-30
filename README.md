@@ -111,8 +111,9 @@ The published page has two tabs:
 - **Insights** — Recommendations (buckets derived from the brain),
   Top moves (by % change), and a merged Latest-news feed.
 
-It refreshes itself every 10 minutes, and the workflow rebuilds the data every
-10 minutes during US market hours.
+The workflow rebuilds the data three times on weekdays — at market open
+(~9:30 ET), midday (~1pm ET) and market close (~4pm ET) — and the open page
+auto-refreshes hourly to pick up the latest build.
 
 **Editing the watchlist from the page (optional).** Because Pages is static,
 the Add/Remove buttons commit to `watchlist.txt` via the GitHub API. Tap the

@@ -11,11 +11,14 @@ on:
       - watchlist.txt
       - "stocksync/**"
       - .github/workflows/dashboard.yml
-  # Refresh every 10 minutes on weekdays during US market hours (cron is UTC;
-  # 13:00-21:00 UTC covers ~9am-5pm ET incl. DST). GitHub may delay or skip
-  # high-frequency scheduled runs under load, so timing is approximate.
+  # Three weekday runs: market open, midday (~1pm ET), and market close.
+  # Cron is UTC and does NOT follow daylight saving; these times match Eastern
+  # Daylight Time (EDT, UTC-4). In winter (EST) they land one hour earlier in
+  # ET — bump each hour up by 1 if you want to track EST exactly.
   schedule:
-    - cron: "*/10 13-21 * * 1-5"
+    - cron: "30 13 * * 1-5"   # 09:30 ET — market open
+    - cron: "0 17 * * 1-5"    # 13:00 ET — midday
+    - cron: "0 20 * * 1-5"    # 16:00 ET — market close
   # Allow a manual run from the Actions tab (works from the GitHub mobile site too).
   workflow_dispatch:
 
@@ -56,7 +59,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --branch "${{ github.ref_name }}" \
             --watchlist-path watchlist.txt \
-            --refresh 600
+            --refresh 3600
 
       - uses: actions/configure-pages@v5
 
