@@ -136,6 +136,28 @@ def test_fetch_movers_caches(cache_file):
     assert calls["n"] == 1  # second call served from cache
 
 
+def test_fetch_market_news_normalizes_and_limits(cache_file):
+    raw = [
+        ("09:00AM", "Markets rally on rate-cut hopes", "https://n/1", "Reuters"),
+        ("08:30AM", "Oil slips ahead of data", "https://n/2", "Bloomberg"),
+        ("08:00AM", "Tech leads premarket", "https://n/3", "CNBC"),
+    ]
+    provider = FinvizProvider(get_all_news=lambda: raw, cache_path=cache_file)
+    news = provider.fetch_market_news(limit=2)
+    assert len(news) == 2
+    assert news[0]["headline"] == "Markets rally on rate-cut hopes"
+    assert news[0]["url"] == "https://n/1"
+    assert news[0]["source"] == "Reuters"
+
+
+def test_fetch_market_news_failure_is_empty(cache_file):
+    def boom():
+        raise RuntimeError("news down")
+
+    provider = FinvizProvider(get_all_news=boom, cache_path=cache_file)
+    assert provider.fetch_market_news() == []
+
+
 def test_stockdata_roundtrip():
     data = StockData(
         ticker="AAPL",

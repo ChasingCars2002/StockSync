@@ -200,6 +200,61 @@ def _market_movers_section(movers: Optional[List[Tuple[str, List[dict]]]]) -> st
     return "".join(groups)
 
 
+def _market_recs_section(analyses: Optional[List[Analysis]]) -> str:
+    """Render brain-scored recommendations drawn from *off-watchlist* names."""
+    if analyses is None:
+        return '<p class="muted">Off-watchlist recommendations unavailable.</p>'
+    if not analyses:
+        return '<p class="muted">No strong off-watchlist setups right now.</p>'
+
+    rows = []
+    for a in analyses:
+        cls = _score_class(a.composite)
+        score = "n/a" if a.composite is None else f"{a.composite:.0f}"
+        why = " · ".join(s.text for s in a.signals if s.sentiment == "bullish")[:80]
+        company = _esc(a.company)[:28]
+        tkr = _esc(a.ticker)
+        rows.append(
+            '<div class="rec-row">'
+            f'<span class="rec-badge {cls}">{score}</span>'
+            f'<span class="rec-tkr">{tkr}</span>'
+            f'<span class="rec-why"><b>{_esc(a.verdict)}</b>'
+            f'{(" · " + _esc(company)) if company else ""}'
+            f'{(" · " + _esc(why)) if why else ""}</span>'
+            f'<button class="add-mini" title="Add to watchlist" onclick="addTicker(\'{tkr}\')">+</button>'
+            "</div>"
+        )
+    return '<div class="moves">' + "".join(rows) + "</div>"
+
+
+def _top_news_section(items: Optional[List[dict]]) -> str:
+    """Render the top general market-news stories as a numbered list."""
+    if items is None:
+        return '<p class="muted">Market news unavailable.</p>'
+    if not items:
+        return '<p class="muted">No market news right now.</p>'
+
+    out = []
+    for i, it in enumerate(items, start=1):
+        headline = it.get("headline", "")
+        url = it.get("url", "")
+        source = it.get("source", "")
+        dot = {"positive": "good", "negative": "bad"}.get(classify_headline(headline), "mid")
+        title = _esc(headline)
+        if url:
+            title = f'<a href="{_esc(url)}" target="_blank" rel="noopener">{title}</a>'
+        meta = " · ".join(p for p in (_esc(it.get("time", "")), _esc(source)) if p)
+        out.append(
+            '<div class="news-row">'
+            f'<span class="n-rank">{i}</span>'
+            f'<span class="dot {dot}"></span>'
+            f'<span class="n-head">{title}</span>'
+            f'<span class="n-meta">{meta}</span>'
+            "</div>"
+        )
+    return '<div class="news-feed">' + "".join(out) + "</div>"
+
+
 def _recommendations_section(entries: List[Entry]) -> str:
     analyses = [a for a, _ in entries]
 
@@ -399,6 +454,7 @@ h2.section { font-size: 1rem; margin: 18px 0 8px; color: #c9d1d9; }
 .news-row:first-child { border-top: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; }
 .dot.good { background: #3fb950; } .dot.mid { background: #8b949e; } .dot.bad { background: #f85149; }
+.n-rank { flex: 0 0 20px; color: #8b949e; font-weight: 700; text-align: right; }
 .n-tkr { font-weight: 700; flex: 0 0 50px; }
 .n-head { flex: 1; } .n-head a { color: #58a6ff; text-decoration: none; }
 .n-meta { color: #8b949e; font-size: .7rem; flex: 0 0 auto; }
@@ -545,6 +601,8 @@ def render_html(
     watchlist_path: str = "watchlist.txt",
     refresh_seconds: int = 600,
     movers: Optional[List[Tuple[str, List[dict]]]] = None,
+    market_recs: Optional[List[Analysis]] = None,
+    market_news: Optional[List[dict]] = None,
 ) -> str:
     """Render the full two-tab HTML dashboard.
 
@@ -581,6 +639,8 @@ def render_html(
     recs = _recommendations_section(ranked)
     news = _news_section(ranked)
     market = _market_movers_section(movers)
+    market_rec_html = _market_recs_section(market_recs)
+    top_news_html = _top_news_section(market_news)
 
     token_link = "https://github.com/settings/personal-access-tokens/new"
 
@@ -615,13 +675,17 @@ def render_html(
 </section>
 
 <section id="panel-insights" class="panel">
+  <h2 class="section">Recommendations <span class="muted">(off your watchlist)</span></h2>
+  {market_rec_html}
+  <h2 class="section">Top 10 market news</h2>
+  {top_news_html}
   <h2 class="section">Market movers &amp; trends <span class="muted">(off your watchlist)</span></h2>
   {market}
   <h2 class="section">Recommendations <span class="muted">(your watchlist)</span></h2>
   {recs}
   <h2 class="section">Watchlist moves</h2>
   {moves}
-  <h2 class="section">Latest news</h2>
+  <h2 class="section">Watchlist news</h2>
   {news}
 </section>
 

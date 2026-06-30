@@ -98,6 +98,24 @@ def _default_screener(signal: str, limit: int) -> List[Dict[str, str]]:
     return list(screen)[:limit]
 
 
+def _normalize_news_row(row) -> Dict[str, str]:
+    """Reduce a Finviz market-news row to a uniform dict."""
+    seq = list(row)
+    return {
+        "time": seq[0] if len(seq) > 0 else "",
+        "headline": seq[1] if len(seq) > 1 else "",
+        "url": seq[2] if len(seq) > 2 else "",
+        "source": seq[3] if len(seq) > 3 else "",
+    }
+
+
+def _default_all_news() -> List:
+    """Fetch Finviz's general market-news feed."""
+    import finviz
+
+    return finviz.get_all_news() or []
+
+
 class FinvizProvider:
     """Fetches and caches stock data via Finviz.
 
@@ -114,6 +132,7 @@ class FinvizProvider:
         get_analyst_price_targets: Optional[RatingsFetcher] = None,
         get_insider: Optional[InsiderFetcher] = None,
         get_screener: Optional[ScreenerFetcher] = None,
+        get_all_news: Optional[Callable[[], List]] = None,
         cache_path: Optional[Path] = None,
         ttl_seconds: Optional[int] = None,
         clock: Callable[[], float] = time.time,
@@ -123,6 +142,7 @@ class FinvizProvider:
         self._get_ratings = get_analyst_price_targets
         self._get_insider = get_insider
         self._get_screener = get_screener
+        self._get_all_news = get_all_news
         self._cache_path = Path(cache_path) if cache_path is not None else config.cache_path()
         self._ttl = config.CACHE_TTL_SECONDS if ttl_seconds is None else ttl_seconds
         self._clock = clock
@@ -247,3 +267,26 @@ class FinvizProvider:
 
         filtered = [r for r in rows if r.get("ticker") and r["ticker"] not in exclude_set]
         return filtered[:limit]
+
+    def fetch_market_news(self, *, limit: int = 10, use_cache: bool = True) -> List[Dict[str, str]]:
+        """Return the top general market-news stories (newest first).
+
+        Failures degrade to an empty list rather than raising.
+        """
+        key = "@news:all"
+        rows: Optional[List[Dict[str, str]]] = None
+        if use_cache:
+            entry = self._cache.get(key)
+            if entry and (self._clock() - entry.get("fetched_at", 0.0)) <= self._ttl:
+                rows = entry.get("rows")
+
+        if rows is None:
+            fetcher = self._get_all_news if self._get_all_news is not None else _default_all_news
+            try:
+                rows = [_normalize_news_row(r) for r in (fetcher() or [])]
+                self._cache[key] = {"rows": rows, "fetched_at": self._clock()}
+                self._save_cache()
+            except Exception:  # noqa: BLE001 - best-effort
+                rows = []
+
+        return rows[:limit]

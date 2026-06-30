@@ -67,7 +67,7 @@ def test_render_html_has_tabs_and_insights():
     page = render_html(entries, generated_at="t")
     # Two tabs and both panels present.
     assert 'data-tab="watchlist"' in page and 'data-tab="insights"' in page
-    assert "Recommendations" in page and "Watchlist moves" in page and "Latest news" in page
+    assert "Recommendations" in page and "Watchlist moves" in page and "Watchlist news" in page
     # Add box and per-card remove buttons.
     assert 'id="add-input"' in page
     assert "addTicker(" in page and "removeTicker(" in page
@@ -140,6 +140,49 @@ def test_render_html_movers_unavailable():
         movers=None,
     )
     assert "Market movers unavailable" in page
+
+
+def test_render_html_market_recommendations():
+    rec = analyze(StockData(
+        ticker="PLTR",
+        fundamentals=dict(fixtures.AAPL_FUNDAMENTALS, Ticker="PLTR", Company="Palantir"),
+        news=list(fixtures.AAPL_NEWS),
+        insider=list(fixtures.AAPL_INSIDER),
+    ))
+    page = render_html(
+        [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)],
+        generated_at="t",
+        market_recs=[rec],
+    )
+    assert "Recommendations" in page
+    assert "off your watchlist" in page
+    assert "PLTR" in page
+    assert "addTicker('PLTR')" in page  # quick-add on each rec
+
+
+def test_render_html_market_recs_empty_message():
+    page = render_html(
+        [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)],
+        generated_at="t",
+        market_recs=[],
+    )
+    assert "No strong off-watchlist setups" in page
+
+
+def test_render_html_top_news():
+    news = [
+        {"time": "09:00AM", "headline": "Markets surge on strong jobs report", "url": "https://n/1", "source": "Reuters"},
+        {"time": "08:30AM", "headline": "Bank stocks plunge on lawsuit fears", "url": "https://n/2", "source": "WSJ"},
+    ]
+    page = render_html(
+        [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)],
+        generated_at="t",
+        market_news=news,
+    )
+    assert "Top 10 market news" in page
+    assert "Markets surge on strong jobs report" in page
+    assert 'class="n-rank">1<' in page  # numbered
+    assert "https://n/2" in page
 
 
 def test_load_tickers_file(tmp_path):

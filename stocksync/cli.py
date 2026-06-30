@@ -92,6 +92,26 @@ def _build_parser() -> argparse.ArgumentParser:
     p_export.add_argument(
         "--movers-limit", type=int, default=8, help="rows per market-mover group"
     )
+    p_export.add_argument(
+        "--no-market-recs",
+        action="store_true",
+        help="skip brain-scored off-watchlist recommendations",
+    )
+    p_export.add_argument(
+        "--rec-candidates",
+        type=int,
+        default=12,
+        help="how many off-watchlist movers to fully analyze as rec candidates",
+    )
+    p_export.add_argument(
+        "--rec-limit", type=int, default=6, help="how many off-watchlist recs to show"
+    )
+    p_export.add_argument(
+        "--no-market-news", action="store_true", help="skip the top market-news section"
+    )
+    p_export.add_argument(
+        "--news-limit", type=int, default=10, help="number of top market-news stories"
+    )
 
     return parser
 
@@ -218,6 +238,36 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
             )
             movers.append((title, rows))
 
+    # Brain-scored recommendations from off-watchlist movers: use the movers as
+    # a candidate pool, fully analyze each, and surface the highest scorers.
+    market_recs = None
+    if movers and not args.no_market_recs:
+        seen = {t.upper() for t in tickers}
+        pool = []
+        for _, rows in movers:
+            for r in rows:
+                t = r.get("ticker", "")
+                if t and t not in seen:
+                    seen.add(t)
+                    pool.append(t)
+        pool = pool[: args.rec_candidates]
+
+        scored = []
+        for t in pool:
+            d = provider.fetch(t, use_cache=not args.no_cache)
+            if d.ok:
+                a = brain.analyze(d)
+                if a.composite is not None:
+                    scored.append(a)
+        scored.sort(key=lambda a: a.composite, reverse=True)
+        # Only recommend names that score at least "Favorable".
+        market_recs = [a for a in scored if a.composite >= 55][: args.rec_limit]
+
+    # Top general market-news stories.
+    market_news = None if args.no_market_news else provider.fetch_market_news(
+        limit=args.news_limit, use_cache=not args.no_cache
+    )
+
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     repo = args.repo or os.environ.get("GITHUB_REPOSITORY")
     branch = args.branch or os.environ.get("GITHUB_REF_NAME")
@@ -231,6 +281,8 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
         watchlist_path=args.watchlist_path,
         refresh_seconds=args.refresh,
         movers=movers,
+        market_recs=market_recs,
+        market_news=market_news,
     )
 
     out_dir = os.path.dirname(os.path.abspath(args.output))
