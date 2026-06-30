@@ -161,6 +161,45 @@ def _moves_section(entries: List[Entry]) -> str:
     return '<div class="moves">' + "".join(out) + "</div>"
 
 
+def _market_movers_section(movers: Optional[List[Tuple[str, List[dict]]]]) -> str:
+    """Render off-watchlist screener groups (gainers, losers, new highs, ...).
+
+    *movers* is a list of ``(group_title, rows)`` where each row is a
+    normalized screener dict. Each row gets a "+" button to add that ticker to
+    the watchlist.
+    """
+    if not movers:
+        return '<p class="muted">Market movers unavailable.</p>'
+
+    groups = []
+    for title, rows in movers:
+        if not rows:
+            continue
+        out_rows = []
+        for r in rows:
+            tkr = _esc(r.get("ticker", ""))
+            chg = parse_number(r.get("change"))
+            cls = "up" if (chg or 0) > 0 else "down" if (chg or 0) < 0 else "flat"
+            chg_txt = _esc(r.get("change") or "-")
+            company = _esc(r.get("company", ""))
+            out_rows.append(
+                '<div class="move-row">'
+                f'<span class="m-tkr">{tkr}</span>'
+                f'<span class="m-co">{company}</span>'
+                f'<span class="m-price">{_esc(r.get("price") or "-")}</span>'
+                f'<span class="m-chg {cls}">{chg_txt}</span>'
+                f'<button class="add-mini" title="Add to watchlist" onclick="addTicker(\'{tkr}\')">+</button>'
+                "</div>"
+            )
+        groups.append(
+            f'<h3 class="rec-title">{_esc(title)}</h3>'
+            '<div class="moves">' + "".join(out_rows) + "</div>"
+        )
+    if not groups:
+        return '<p class="muted">No market movers right now.</p>'
+    return "".join(groups)
+
+
 def _recommendations_section(entries: List[Entry]) -> str:
     analyses = [a for a, _ in entries]
 
@@ -340,11 +379,15 @@ h2.section { font-size: 1rem; margin: 18px 0 8px; color: #c9d1d9; }
 .moves { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; }
 .move-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid #21262d; font-size: .86rem; }
 .move-row:first-child { border-top: 0; }
-.m-tkr { font-weight: 700; flex: 0 0 60px; }
-.m-price { flex: 0 0 70px; color: #c9d1d9; }
-.m-chg { flex: 0 0 78px; font-weight: 700; }
+.m-tkr { font-weight: 700; flex: 0 0 56px; }
+.m-co { flex: 1; color: #8b949e; font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-price { flex: 0 0 64px; color: #c9d1d9; text-align: right; }
+.m-chg { flex: 0 0 64px; font-weight: 700; text-align: right; }
 .m-chg.up { color: #3fb950; } .m-chg.down { color: #f85149; } .m-chg.flat { color: #8b949e; }
 .m-verdict { color: #8b949e; font-size: .78rem; margin-left: auto; }
+.add-mini { flex: 0 0 28px; background: #21262d; border: 1px solid #30363d; color: #3fb950;
+  border-radius: 7px; height: 26px; font-size: 1rem; line-height: 1; cursor: pointer; }
+.add-mini:hover { border-color: #3fb950; }
 .rec-group { margin-bottom: 14px; }
 .rec-title { font-size: .85rem; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; }
 .rec-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #21262d; font-size: .84rem; }
@@ -501,6 +544,7 @@ def render_html(
     branch: Optional[str] = None,
     watchlist_path: str = "watchlist.txt",
     refresh_seconds: int = 600,
+    movers: Optional[List[Tuple[str, List[dict]]]] = None,
 ) -> str:
     """Render the full two-tab HTML dashboard.
 
@@ -536,6 +580,7 @@ def render_html(
     moves = _moves_section(ranked)
     recs = _recommendations_section(ranked)
     news = _news_section(ranked)
+    market = _market_movers_section(movers)
 
     token_link = "https://github.com/settings/personal-access-tokens/new"
 
@@ -570,9 +615,11 @@ def render_html(
 </section>
 
 <section id="panel-insights" class="panel">
-  <h2 class="section">Recommendations</h2>
+  <h2 class="section">Market movers &amp; trends <span class="muted">(off your watchlist)</span></h2>
+  {market}
+  <h2 class="section">Recommendations <span class="muted">(your watchlist)</span></h2>
   {recs}
-  <h2 class="section">Top moves</h2>
+  <h2 class="section">Watchlist moves</h2>
   {moves}
   <h2 class="section">Latest news</h2>
   {news}

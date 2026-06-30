@@ -67,7 +67,7 @@ def test_render_html_has_tabs_and_insights():
     page = render_html(entries, generated_at="t")
     # Two tabs and both panels present.
     assert 'data-tab="watchlist"' in page and 'data-tab="insights"' in page
-    assert "Recommendations" in page and "Top moves" in page and "Latest news" in page
+    assert "Recommendations" in page and "Watchlist moves" in page and "Latest news" in page
     # Add box and per-card remove buttons.
     assert 'id="add-input"' in page
     assert "addTicker(" in page and "removeTicker(" in page
@@ -108,6 +108,38 @@ def test_news_feed_merges_tickers():
     assert "news-feed" in page
     assert "Apple surges" in page
     assert "earnings miss" in page
+
+
+def test_render_html_market_movers():
+    movers = [
+        ("Top gainers", [
+            {"ticker": "GME", "company": "GameStop", "price": "30", "change": "12%"},
+        ]),
+        ("Top losers", [
+            {"ticker": "AMC", "company": "AMC", "price": "5", "change": "-8%"},
+        ]),
+    ]
+    page = render_html(
+        [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)],
+        generated_at="t",
+        movers=movers,
+    )
+    assert "Market movers" in page
+    assert "off your watchlist" in page
+    assert "Top gainers" in page and "GME" in page
+    assert "Top losers" in page and "AMC" in page
+    # Each mover row offers a quick-add button.
+    assert "addTicker('GME')" in page
+    assert "m-chg up" in page and "m-chg down" in page
+
+
+def test_render_html_movers_unavailable():
+    page = render_html(
+        [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)],
+        generated_at="t",
+        movers=None,
+    )
+    assert "Market movers unavailable" in page
 
 
 def test_load_tickers_file(tmp_path):

@@ -74,6 +74,28 @@ StockFetcher = Callable[[str], Dict[str, str]]
 NewsFetcher = Callable[[str], List[Tuple[str, str, str, str]]]
 RatingsFetcher = Callable[[str], List[Dict[str, str]]]
 InsiderFetcher = Callable[[str], List[Dict[str, str]]]
+# (signal, limit) -> list of screener row dicts.
+ScreenerFetcher = Callable[[str, int], List[Dict[str, str]]]
+
+
+def _normalize_screener_row(row: Dict[str, str]) -> Dict[str, str]:
+    """Reduce a Finviz screener row to the fields the dashboard uses."""
+    return {
+        "ticker": (row.get("Ticker") or row.get("ticker") or "").upper(),
+        "company": row.get("Company", ""),
+        "sector": row.get("Sector", ""),
+        "price": row.get("Price", ""),
+        "change": row.get("Change", ""),
+        "volume": row.get("Volume", ""),
+    }
+
+
+def _default_screener(signal: str, limit: int) -> List[Dict[str, str]]:
+    """Run a Finviz screener for a named signal (e.g. ``"ta_topgainers"``)."""
+    from finviz.screener import Screener
+
+    screen = Screener(signal=signal)
+    return list(screen)[:limit]
 
 
 class FinvizProvider:
@@ -91,6 +113,7 @@ class FinvizProvider:
         get_news: Optional[NewsFetcher] = None,
         get_analyst_price_targets: Optional[RatingsFetcher] = None,
         get_insider: Optional[InsiderFetcher] = None,
+        get_screener: Optional[ScreenerFetcher] = None,
         cache_path: Optional[Path] = None,
         ttl_seconds: Optional[int] = None,
         clock: Callable[[], float] = time.time,
@@ -99,6 +122,7 @@ class FinvizProvider:
         self._get_news = get_news
         self._get_ratings = get_analyst_price_targets
         self._get_insider = get_insider
+        self._get_screener = get_screener
         self._cache_path = Path(cache_path) if cache_path is not None else config.cache_path()
         self._ttl = config.CACHE_TTL_SECONDS if ttl_seconds is None else ttl_seconds
         self._clock = clock
@@ -185,3 +209,41 @@ class FinvizProvider:
             self._save_cache()
 
         return data
+
+    def fetch_movers(
+        self,
+        signal: str,
+        *,
+        limit: int = 10,
+        exclude: Optional[List[str]] = None,
+        use_cache: bool = True,
+    ) -> List[Dict[str, str]]:
+        """Return normalized screener rows for a Finviz *signal*.
+
+        *signal* is a Finviz screener signal code (e.g. ``"ta_topgainers"``).
+        *exclude* tickers (typically the user's watchlist) are filtered out so
+        the result is genuinely "things not already tracked". Failures degrade
+        to an empty list rather than raising.
+        """
+        exclude_set = {t.upper() for t in (exclude or [])}
+        key = f"@signal:{signal}"
+
+        rows: Optional[List[Dict[str, str]]] = None
+        if use_cache:
+            entry = self._cache.get(key)
+            if entry and (self._clock() - entry.get("fetched_at", 0.0)) <= self._ttl:
+                rows = entry.get("rows")
+
+        if rows is None:
+            fetcher = self._get_screener if self._get_screener is not None else _default_screener
+            try:
+                # Over-fetch a little so post-exclusion we still have enough.
+                raw = fetcher(signal, limit + len(exclude_set) + 5)
+                rows = [_normalize_screener_row(r) for r in raw]
+                self._cache[key] = {"rows": rows, "fetched_at": self._clock()}
+                self._save_cache()
+            except Exception:  # noqa: BLE001 - movers are best-effort
+                rows = []
+
+        filtered = [r for r in rows if r.get("ticker") and r["ticker"] not in exclude_set]
+        return filtered[:limit]

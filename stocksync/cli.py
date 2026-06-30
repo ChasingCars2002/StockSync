@@ -84,8 +84,26 @@ def _build_parser() -> argparse.ArgumentParser:
     p_export.add_argument(
         "--refresh", type=int, default=600, help="page auto-refresh interval in seconds"
     )
+    p_export.add_argument(
+        "--no-movers",
+        action="store_true",
+        help="skip the off-watchlist market movers section in Insights",
+    )
+    p_export.add_argument(
+        "--movers-limit", type=int, default=8, help="rows per market-mover group"
+    )
 
     return parser
+
+
+# Off-watchlist discovery groups shown in the Insights tab, as
+# (display title, Finviz screener signal).
+DEFAULT_MOVER_SIGNALS = [
+    ("Top gainers", "ta_topgainers"),
+    ("Top losers", "ta_toplosers"),
+    ("New 52-week highs", "ta_newhigh"),
+    ("Unusual volume", "ta_unusualvolume"),
+]
 
 
 def _provider(args: argparse.Namespace) -> FinvizProvider:
@@ -190,6 +208,16 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
             skipped.append(ticker)
             print(f"  (skipped {ticker}: no data)", file=sys.stderr)
 
+    # Off-watchlist market movers/trends for the Insights tab.
+    movers = None
+    if not args.no_movers:
+        movers = []
+        for title, signal in DEFAULT_MOVER_SIGNALS:
+            rows = provider.fetch_movers(
+                signal, limit=args.movers_limit, exclude=tickers, use_cache=not args.no_cache
+            )
+            movers.append((title, rows))
+
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     repo = args.repo or os.environ.get("GITHUB_REPOSITORY")
     branch = args.branch or os.environ.get("GITHUB_REF_NAME")
@@ -202,6 +230,7 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
         branch=branch,
         watchlist_path=args.watchlist_path,
         refresh_seconds=args.refresh,
+        movers=movers,
     )
 
     out_dir = os.path.dirname(os.path.abspath(args.output))

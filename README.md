@@ -108,8 +108,10 @@ The published page has two tabs:
 
 - **Watchlist** — a card per ticker, plus an **Add ticker** box and a **✕
   Remove** button on each card.
-- **Insights** — Recommendations (buckets derived from the brain),
-  Top moves (by % change), and a merged Latest-news feed.
+- **Insights** — **Market movers & trends off your watchlist** (top gainers,
+  top losers, new 52-week highs and unusual volume from Finviz's screener, each
+  with a quick-add button), plus Recommendations (buckets derived from the
+  brain), your watchlist's moves, and a merged Latest-news feed.
 
 The workflow rebuilds the data three times on weekdays — at market open
 (~9:30 ET), midday (~1pm ET) and market close (~4pm ET) — and the open page

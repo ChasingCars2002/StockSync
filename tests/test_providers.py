@@ -88,6 +88,54 @@ def test_cache_persists_to_disk(cache_file):
     assert counters2["stock"] == 0
 
 
+def test_fetch_movers_normalizes_and_excludes(cache_file):
+    rows = [
+        {"Ticker": "GME", "Company": "GameStop", "Price": "30", "Change": "12%", "Volume": "9M"},
+        {"Ticker": "AAPL", "Company": "Apple", "Price": "195", "Change": "1%", "Volume": "1M"},
+        {"Ticker": "AMC", "Company": "AMC", "Price": "5", "Change": "8%", "Volume": "5M"},
+    ]
+    provider = FinvizProvider(
+        get_screener=lambda sig, lim: rows,
+        cache_path=cache_file,
+    )
+    movers = provider.fetch_movers("ta_topgainers", limit=10, exclude=["AAPL"])
+    tickers = [m["ticker"] for m in movers]
+    assert "AAPL" not in tickers          # excluded (on watchlist)
+    assert tickers == ["GME", "AMC"]
+    assert movers[0]["company"] == "GameStop"
+    assert movers[0]["change"] == "12%"
+
+
+def test_fetch_movers_limit(cache_file):
+    rows = [{"Ticker": f"T{i}", "Price": "1", "Change": "1%"} for i in range(20)]
+    provider = FinvizProvider(get_screener=lambda sig, lim: rows, cache_path=cache_file)
+    assert len(provider.fetch_movers("ta_topgainers", limit=5)) == 5
+
+
+def test_fetch_movers_failure_is_empty(cache_file):
+    def boom(sig, lim):
+        raise RuntimeError("screener down")
+
+    provider = FinvizProvider(get_screener=boom, cache_path=cache_file)
+    assert provider.fetch_movers("ta_topgainers") == []
+
+
+def test_fetch_movers_caches(cache_file):
+    calls = {"n": 0}
+
+    def screener(sig, lim):
+        calls["n"] += 1
+        return [{"Ticker": "GME", "Price": "1", "Change": "1%"}]
+
+    clock = {"t": 1000.0}
+    provider = FinvizProvider(
+        get_screener=screener, cache_path=cache_file, clock=lambda: clock["t"], ttl_seconds=300
+    )
+    provider.fetch_movers("ta_topgainers")
+    provider.fetch_movers("ta_topgainers")
+    assert calls["n"] == 1  # second call served from cache
+
+
 def test_stockdata_roundtrip():
     data = StockData(
         ticker="AAPL",
