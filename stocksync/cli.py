@@ -69,6 +69,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tickers", nargs="+", help="explicit tickers to include (overrides watchlist)"
     )
     p_export.add_argument("--title", default="StockSync", help="page title")
+    p_export.add_argument(
+        "--repo",
+        help='"owner/name" enabling in-page add/remove buttons (defaults to $GITHUB_REPOSITORY)',
+    )
+    p_export.add_argument(
+        "--branch", help="branch the add/remove buttons commit to (defaults to $GITHUB_REF_NAME)"
+    )
+    p_export.add_argument(
+        "--watchlist-path",
+        default="watchlist.txt",
+        help="path of the watchlist file within the repo (for add/remove buttons)",
+    )
+    p_export.add_argument(
+        "--refresh", type=int, default=600, help="page auto-refresh interval in seconds"
+    )
 
     return parser
 
@@ -176,8 +191,17 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
             print(f"  (skipped {ticker}: no data)", file=sys.stderr)
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    repo = args.repo or os.environ.get("GITHUB_REPOSITORY")
+    branch = args.branch or os.environ.get("GITHUB_REF_NAME")
     page = webreport.render_html(
-        entries, generated_at=generated_at, title=args.title, skipped=skipped
+        entries,
+        generated_at=generated_at,
+        title=args.title,
+        skipped=skipped,
+        repo=repo,
+        branch=branch,
+        watchlist_path=args.watchlist_path,
+        refresh_seconds=args.refresh,
     )
 
     out_dir = os.path.dirname(os.path.abspath(args.output))

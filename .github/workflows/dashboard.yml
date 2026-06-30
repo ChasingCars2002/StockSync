@@ -11,9 +11,11 @@ on:
       - watchlist.txt
       - "stocksync/**"
       - .github/workflows/dashboard.yml
-  # Refresh on a schedule (weekdays, ~30 min after the US market opens; cron is UTC).
+  # Refresh every 10 minutes on weekdays during US market hours (cron is UTC;
+  # 13:00-21:00 UTC covers ~9am-5pm ET incl. DST). GitHub may delay or skip
+  # high-frequency scheduled runs under load, so timing is approximate.
   schedule:
-    - cron: "0 14 * * 1-5"
+    - cron: "*/10 13-21 * * 1-5"
   # Allow a manual run from the Actions tab (works from the GitHub mobile site too).
   workflow_dispatch:
 
@@ -44,12 +46,17 @@ jobs:
           pip install .
 
       - name: Build dashboard
-        # --no-cache so each scheduled run fetches fresh data.
+        # --no-cache so each scheduled run fetches fresh data. --repo/--branch
+        # wire up the in-page add/remove buttons to commit to watchlist.txt.
         run: |
           python -m stocksync --no-cache export \
             --watchlist-file watchlist.txt \
             --output public/index.html \
-            --title "StockSync Watchlist"
+            --title "StockSync Watchlist" \
+            --repo "${{ github.repository }}" \
+            --branch "${{ github.ref_name }}" \
+            --watchlist-path watchlist.txt \
+            --refresh 600
 
       - uses: actions/configure-pages@v5
 

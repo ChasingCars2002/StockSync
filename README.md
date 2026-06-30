@@ -104,9 +104,27 @@ deployment → Source** and choose **GitHub Actions**. Then run the workflow onc
 (Actions tab → *Build & publish dashboard* → *Run workflow*). Your dashboard
 will be at `https://<your-username>.github.io/StockSync/`.
 
-**Day to day:** edit `watchlist.txt` straight from the GitHub website/app on
-your phone (pencil icon → change tickers → *Commit changes*). The page rebuilds
-automatically. GitHub's runners can reach Finviz, so the data is live.
+The published page has two tabs:
+
+- **Watchlist** — a card per ticker, plus an **Add ticker** box and a **✕
+  Remove** button on each card.
+- **Insights** — Recommendations (buckets derived from the brain),
+  Top moves (by % change), and a merged Latest-news feed.
+
+It refreshes itself every 10 minutes, and the workflow rebuilds the data every
+10 minutes during US market hours.
+
+**Editing the watchlist from the page (optional).** Because Pages is static,
+the Add/Remove buttons commit to `watchlist.txt` via the GitHub API. Tap the
+**⚙** button and paste a
+[fine-grained token](https://github.com/settings/personal-access-tokens/new)
+scoped to this repo with **Contents: Read and write**. The token is stored only
+in your browser (localStorage) — don't do this on a shared device. After an
+add/remove, the workflow rebuilds and the page reloads in ~90s.
+
+**Or just edit the file:** change `watchlist.txt` straight from the GitHub
+website/app (pencil icon → edit → *Commit changes*) — no token needed. The page
+rebuilds automatically. GitHub's runners can reach Finviz, so the data is live.
 
 You can also generate the page locally:
 

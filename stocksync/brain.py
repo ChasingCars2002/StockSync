@@ -262,6 +262,18 @@ def _composite(dimensions: List[DimensionScore]) -> Optional[float]:
 # News sentiment
 # ---------------------------------------------------------------------------
 
+def classify_headline(headline: str) -> str:
+    """Classify a single headline as ``"positive"``, ``"negative"`` or ``"neutral"``."""
+    tokens = {tok.strip(".,:;!?\"'()[]").lower() for tok in str(headline).split()}
+    pos = len(tokens & _POSITIVE_WORDS)
+    neg = len(tokens & _NEGATIVE_WORDS)
+    if pos > neg:
+        return "positive"
+    if neg > pos:
+        return "negative"
+    return "neutral"
+
+
 def score_news(news: List) -> NewsSentiment:
     """Score a list of Finviz news tuples by simple headline lexicon matching."""
     positive = 0
