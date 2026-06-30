@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# StockSync local data (watchlist + cache live in ~/.stocksync by default,
+# but ignore any that land in-repo via STOCKSYNC_HOME=.)
+.stocksync/
+*.local.json

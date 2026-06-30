@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stocksync"
+version = "0.1.0"
+description = "A stock watchlist 'brain' that aggregates news and financial metrics via Finviz."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "StockSync" }]
+keywords = ["stocks", "finviz", "watchlist", "finance", "news", "metrics"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "finviz>=1.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+stocksync = "stocksync.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ChasingCars2002/StockSync"
+
+[tool.setuptools.packages.find]
+include = ["stocksync*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
