@@ -6,7 +6,13 @@ scores, signals and a one-line verdict — all from your terminal.
 
 ```
 AAPL  —  Apple Inc.
-Score: 55.6/100   [Neutral / Mixed]   195.12 (1.45%)
+Score: 55.6/100   [Neutral / Mixed]   Risk: Low   195.12 (1.45%)
+
+Read
+  AAPL screens neutral / mixed at 56/100, led by profitability (95) and held
+  back by financial health (19). Risk looks low — chiefly meaningful leverage
+  (debt/equity 1.8). News flow is positive (3 positive vs 1 negative
+  headlines).
 
 Dimensions
   Valuation          █████░░░░░░░░░░░░░░░  24.0
@@ -16,9 +22,18 @@ Dimensions
   Analyst            █████████████░░░░░░░  65.8
   Financial Health   ████░░░░░░░░░░░░░░░░  19.3
 
+Strengths
+  + Elite return on equity (150%)
+  + Fat profit margins (25%)
+  + Uptrend intact — above both the 50 and 200-day
+
+Risk factors [Low]
+  ! Meaningful leverage (debt/equity 1.8)
+  ! Thin liquidity (current ratio 0.99)
+
 Signals
   ▲ Near 52-week high
-  ▲ Above 200-day average (uptrend)
+  ▲ Uptrend intact (above 50 & 200-day)
   ▲ Analyst target upside +18%
   ▲ Analyst consensus: Buy (1.9)
   • Pays a dividend (0.5%)
@@ -35,13 +50,26 @@ recent news headlines, analyst price targets and insider transactions — and
 runs them through a scoring engine (the "brain") that produces:
 
 - **Dimension scores (0-100)** across six axes: Valuation, Profitability,
-  Growth, Momentum, Analyst sentiment and Financial Health.
+  Growth, Momentum, Analyst sentiment and Financial Health — each one
+  exposing the raw metrics behind its score, so you can always see *why*.
 - A **composite score** — the availability-weighted blend of the dimensions
   that have data, so a stock missing (say) analyst coverage is still scored
   fairly on what is known.
+- A **risk assessment** (`Low` / `Moderate` / `Elevated` / `High`) built from
+  beta, volatility, short interest, leverage, liquidity, drawdown and price —
+  with every contributing factor named in plain English.
+- **Strengths & concerns** — the specific facts (with the numbers) that most
+  help or hurt the stock: "Elite return on equity (150%)", "Paying far ahead
+  of growth (PEG 5.1)".
+- A generated **thesis** — a few readable sentences tying the whole picture
+  together, including whether the price action is running ahead of the
+  fundamentals (momentum vs quality divergence) or lagging them.
 - **Signals** — discrete bullish/bearish/neutral flags (oversold RSI, near
-  52-week high, analyst upside, high short interest, insider buying, etc.).
+  52-week high, uptrend intact, analyst upside, high short interest, unusual
+  volume, upcoming earnings, insider buying, etc.).
 - **News sentiment** — a lightweight lexicon read over recent headlines.
+- The **52-week range position** — where today's price sits between the
+  52-week low (0%) and high (100%).
 - A **verdict** — `Strong` / `Favorable` / `Neutral / Mixed` / `Cautious` /
   `Bearish`.
 
@@ -106,8 +134,20 @@ will be at `https://<your-username>.github.io/StockSync/`.
 
 The published page has two tabs:
 
-- **Watchlist** — a card per ticker, plus an **Add ticker** box and a **✕
-  Remove** button on each card.
+- **Watchlist** —
+  - a **portfolio pulse** strip: average score, breadth (advancers vs
+    decliners), best mover and laggard at a glance;
+  - a **filter box** and **sort picker** (score, % change, risk, ticker);
+  - one **expandable card per ticker**. Collapsed, a card shows the
+    essentials: a score ring, verdict and risk pills, price/change, the
+    52-week range position and the single top strength & concern. Tap it to
+    expand the full analysis — the generated thesis, dimension bars with the
+    raw metrics behind each score, all strengths/concerns, signals and recent
+    headlines;
+  - an **Add ticker** box, and a **Remove** button inside each expanded card.
+  - The active tab, sort order, expanded cards and scroll position all
+    survive the auto-refresh, and the header shows a live "updated Xm ago"
+    readout.
 - **Insights** —
   - **Recommendations off your watchlist** — candidates are drawn from
     *fundamental/analyst screens* (analyst buy-or-better, quality-value,
@@ -197,7 +237,7 @@ stocksync/
   config.py      # data-dir / cache paths and TTL
   providers.py   # FinvizProvider: fetch + cache + graceful degradation
   watchlist.py   # persistent ticker list with notes
-  brain.py       # scoring engine: dimensions, signals, news, verdict
+  brain.py       # scoring engine: dimensions, risk, strengths/concerns, thesis, signals, verdict
   report.py      # terminal rendering (colour-optional, no deps)
   webreport.py   # self-contained mobile HTML dashboard (GitHub Pages)
   cli.py         # argparse command-line interface

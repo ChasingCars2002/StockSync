@@ -306,12 +306,14 @@ def _cmd_export(args, wl: Watchlist, provider: FinvizProvider) -> int:
         limit=args.news_limit, use_cache=not args.no_cache
     )
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(timezone.utc)
+    generated_at = now.strftime("%Y-%m-%d %H:%M UTC")
     repo = args.repo or os.environ.get("GITHUB_REPOSITORY")
     branch = args.branch or os.environ.get("GITHUB_REF_NAME")
     page = webreport.render_html(
         entries,
         generated_at=generated_at,
+        generated_epoch=now.timestamp(),
         title=args.title,
         skipped=skipped,
         repo=repo,
