@@ -185,6 +185,73 @@ def test_render_html_top_news():
     assert "https://n/2" in page
 
 
+def test_render_html_pulse_strip_and_toolbar():
+    entries = [
+        _entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS),
+        _entry(fixtures.RISKY_FUNDAMENTALS, fixtures.NEGATIVE_NEWS),
+    ]
+    page = render_html(entries, generated_at="t")
+    # Portfolio pulse tiles.
+    assert "Avg score" in page and "Breadth" in page
+    assert "Top mover" in page and "Laggard" in page
+    # Filter + sort controls wired to the JS.
+    assert 'id="filter-input"' in page and 'id="sort-select"' in page
+    assert "applySort" in page and "applyFilter" in page
+
+
+def test_render_html_cards_have_sort_metadata():
+    entries = [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)]
+    page = render_html(entries, generated_at="t")
+    assert 'data-tkr="AAPL"' in page
+    assert 'data-score="' in page and 'data-chg="' in page and 'data-risk="' in page
+
+
+def test_render_html_shows_risk_and_thesis():
+    entries = [
+        _entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS),
+        _entry(fixtures.RISKY_FUNDAMENTALS, fixtures.NEGATIVE_NEWS),
+    ]
+    page = render_html(entries, generated_at="t")
+    assert "risk" in page  # risk pills present
+    assert 'class="thesis"' in page
+    assert "Strengths" in page and "Concerns" in page
+
+
+def test_render_html_dimension_detail_shows_raw_metrics():
+    entries = [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)]
+    page = render_html(entries, generated_at="t")
+    # The valuation bar should reveal the raw P/E behind its score.
+    assert "P/E 31.50" in page
+
+
+def test_render_html_range_bar():
+    entries = [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)]
+    page = render_html(entries, generated_at="t")
+    assert 'class="range52"' in page
+    assert "52W low" in page
+
+
+def test_render_html_expandable_cards():
+    entries = [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)]
+    page = render_html(entries, generated_at="t")
+    assert "toggleCard('AAPL')" in page
+    assert 'class="card-body"' in page
+
+
+def test_render_html_epoch_wiring():
+    entries = [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)]
+    page = render_html(entries, generated_at="t", generated_epoch=1_750_000_000.0)
+    assert "const GENERATED_MS = 1750000000000;" in page
+    page_no_epoch = render_html(entries, generated_at="t")
+    assert "const GENERATED_MS = 0;" in page_no_epoch
+
+
+def test_render_html_score_ring():
+    entries = [_entry(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS)]
+    page = render_html(entries, generated_at="t")
+    assert 'class="ring-fg"' in page and "stroke-dasharray" in page
+
+
 def test_load_tickers_file(tmp_path):
     p = tmp_path / "wl.txt"
     p.write_text("# header\nAAPL\n\nmsft  # a comment\nAAPL\n  nvda\n")

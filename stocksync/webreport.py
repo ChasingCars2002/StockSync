@@ -5,17 +5,23 @@ assets) suitable for publishing to GitHub Pages and opening on a phone.
 
 Two tabs are rendered, both from build-time data:
 
-* **Watchlist** — one card per ticker (score, dimension bars, signals, news
-  sentiment, headlines) plus an "add ticker" box and a remove button on each
-  card. Because Pages is static, add/remove operate by committing to the
-  repo's ``watchlist.txt`` through the GitHub API using a personal access
-  token the user supplies once (stored in their browser's localStorage).
-* **Insights** — aggregated across the whole watchlist: top moves by percent
-  change, recommendation buckets derived from the brain's scores/signals, and
-  a merged, sentiment-coloured news feed (newest first).
+* **Watchlist** — a portfolio pulse strip (average score, breadth, best and
+  worst movers), a live filter box and sort picker, then one expandable card
+  per ticker. Collapsed cards show the essentials at a glance: an SVG score
+  ring, verdict and risk pills, price/change, the 52-week range position and
+  the single top strength & concern. Tapping a card expands the full brain
+  output — the generated thesis, dimension bars with the raw metrics behind
+  each score, all strengths/concerns, signals and recent headlines. Because
+  Pages is static, add/remove operate by committing to the repo's
+  ``watchlist.txt`` through the GitHub API using a personal access token the
+  user supplies once (stored in their browser's localStorage).
+* **Insights** — off-watchlist recommendations (quality-gated), top market
+  news, market movers, watchlist recommendation buckets, ranked watchlist
+  moves with magnitude bars, and a merged sentiment-coloured news feed.
 
-The open page also auto-reloads on an interval so it keeps up with scheduled
-rebuilds.
+UI state survives the auto-refresh reload: the active tab, chosen sort,
+expanded cards and scroll position are persisted client-side, and the header
+shows a live "updated Xm ago" readout.
 """
 
 from __future__ import annotations
@@ -50,15 +56,70 @@ def _esc(text: object) -> str:
     return html.escape(str(text), quote=True)
 
 
-def _bar(name: str, score: Optional[float]) -> str:
+def _chg_bits(change: Optional[str]) -> Tuple[str, str, Optional[float]]:
+    """Normalize a Finviz change string into (css class, display, value)."""
+    val = parse_number(change)
+    if val is None:
+        return "flat", _esc(change or "—"), None
+    cls = "up" if val > 0 else "down" if val < 0 else "flat"
+    return cls, f"{val:+.2f}%", val
+
+
+def _ring(score: Optional[float]) -> str:
+    """A small SVG donut showing the composite score."""
+    cls = _score_class(score)
+    pct = 0 if score is None else max(0.0, min(100.0, score))
+    label = "–" if score is None else f"{score:.0f}"
+    return (
+        f'<div class="ring {cls}">'
+        '<svg viewBox="0 0 36 36" aria-hidden="true">'
+        '<circle class="ring-bg" cx="18" cy="18" r="15.9"></circle>'
+        f'<circle class="ring-fg" cx="18" cy="18" r="15.9" stroke-dasharray="{pct:.0f},100"></circle>'
+        "</svg>"
+        f'<span class="ring-num">{label}</span>'
+        "</div>"
+    )
+
+
+_RISK_CLASS = {"Low": "r-low", "Moderate": "r-mod", "Elevated": "r-elev", "High": "r-high"}
+
+
+def _risk_pill(analysis: Analysis) -> str:
+    risk = analysis.risk
+    if risk is None:
+        return ""
+    cls = _RISK_CLASS.get(risk.level, "r-mod")
+    tip = _esc("; ".join(risk.factors[:3])) if risk.factors else "No specific risk factors flagged"
+    return f'<span class="pill risk {cls}" title="{tip}">{_esc(risk.level)} risk</span>'
+
+
+def _range_bar(analysis: Analysis) -> str:
+    pos = analysis.range_position
+    if pos is None:
+        return ""
+    return (
+        '<div class="range52" title="Position in the 52-week range">'
+        '<span class="r-lab">52W low</span>'
+        f'<div class="r-track"><span class="r-dot" style="left:{pos:.0f}%"></span></div>'
+        '<span class="r-lab">high</span>'
+        f'<span class="r-pos">{pos:.0f}%</span>'
+        "</div>"
+    )
+
+
+def _bar(name: str, score: Optional[float], detail: str = "") -> str:
     cls = _score_class(score)
     pct = 0 if score is None else max(0, min(100, score))
     label = "n/a" if score is None else f"{score:.0f}"
+    detail_html = f'<div class="dim-detail">{detail}</div>' if detail else ""
     return (
+        '<div class="dim-wrap">'
         '<div class="dim">'
         f'<span class="dim-name">{_esc(name)}</span>'
         f'<span class="track"><span class="fill {cls}" style="width:{pct:.0f}%"></span></span>'
         f'<span class="dim-val">{label}</span>'
+        "</div>"
+        f"{detail_html}"
         "</div>"
     )
 
@@ -86,16 +147,39 @@ def _headlines(data: StockData, limit: int = 3) -> str:
     return '<ul class="news">' + "".join(items) + "</ul>"
 
 
-def _card(analysis: Analysis, data: StockData) -> str:
-    cls = _score_class(analysis.composite)
-    score_txt = "n/a" if analysis.composite is None else f"{analysis.composite:.0f}"
-    company = f'<span class="company">{_esc(analysis.company)}</span>' if analysis.company else ""
-    price = ""
-    if analysis.price:
-        chg = f" ({_esc(analysis.change)})" if analysis.change else ""
-        price = f'<span class="price">{_esc(analysis.price)}{chg}</span>'
+def _highlight_lists(analysis: Analysis) -> str:
+    if not analysis.strengths and not analysis.concerns:
+        return ""
+    cols = []
+    if analysis.strengths:
+        lis = "".join(f'<li class="hl-plus">{_esc(s)}</li>' for s in analysis.strengths)
+        cols.append(f'<div class="hl-col"><h4>Strengths</h4><ul>{lis}</ul></div>')
+    if analysis.concerns:
+        lis = "".join(f'<li class="hl-minus">{_esc(c)}</li>' for c in analysis.concerns)
+        cols.append(f'<div class="hl-col"><h4>Concerns</h4><ul>{lis}</ul></div>')
+    return '<div class="hl">' + "".join(cols) + "</div>"
 
-    dims = "".join(_bar(d.name, d.score) for d in analysis.dimensions)
+
+def _card(analysis: Analysis, data: StockData) -> str:
+    tkr = _esc(analysis.ticker)
+    cls = _score_class(analysis.composite)
+    company_bits = [b for b in (analysis.company, analysis.sector) if b]
+    company = (
+        f'<span class="company">{_esc(" · ".join(company_bits))}</span>' if company_bits else ""
+    )
+
+    chg_cls, chg_txt, chg_val = _chg_bits(analysis.change)
+    price = f'<span class="price">{_esc(analysis.price)}</span>' if analysis.price else ""
+    chg = f'<span class="chg {chg_cls}">{chg_txt}</span>' if analysis.change else ""
+
+    dims = "".join(
+        _bar(
+            d.name,
+            d.score,
+            " · ".join(f"{_esc(k)} {_esc(v)}" for k, v in d.raw.items()),
+        )
+        for d in analysis.dimensions
+    )
     signals = "".join(_signal_chip(s.text, s.sentiment) for s in analysis.signals)
     signals_block = f'<div class="signals">{signals}</div>' if signals else ""
 
@@ -107,28 +191,109 @@ def _card(analysis: Analysis, data: StockData) -> str:
             f"(+{analysis.news.positive}/-{analysis.news.negative})</div>"
         )
 
-    tkr = _esc(analysis.ticker)
+    thesis = f'<p class="thesis">{_esc(analysis.thesis)}</p>' if analysis.thesis else ""
+
+    teaser_bits = []
+    if analysis.strengths:
+        teaser_bits.append(f'<div class="tz plus">＋ {_esc(analysis.strengths[0])}</div>')
+    if analysis.concerns:
+        teaser_bits.append(f'<div class="tz minus">− {_esc(analysis.concerns[0])}</div>')
+    teaser = f'<div class="teaser">{"".join(teaser_bits)}</div>' if teaser_bits else ""
+
+    name_key = _esc(f"{analysis.ticker} {analysis.company}".lower())
+    score_attr = -1 if analysis.composite is None else round(analysis.composite, 1)
+    chg_attr = -999 if chg_val is None else chg_val
+    risk_attr = 50 if analysis.risk is None else round(analysis.risk.score)
+
     return f"""
-    <article class="card">
-      <header class="card-head">
+    <article class="card" id="card-{tkr}" data-tkr="{tkr}" data-name="{name_key}"
+             data-score="{score_attr}" data-chg="{chg_attr}" data-risk="{risk_attr}">
+      <header class="card-head" onclick="toggleCard('{tkr}')">
+        {_ring(analysis.composite)}
         <div class="title">
-          <span class="ticker">{tkr}</span>
+          <div class="t-top">
+            <span class="ticker">{tkr}</span>
+            <span class="pill {cls}">{_esc(analysis.verdict)}</span>
+            {_risk_pill(analysis)}
+          </div>
           {company}
-          {price}
         </div>
         <div class="head-right">
-          <div class="badge {cls}">
-            <span class="num">{score_txt}</span>
-            <span class="verdict">{_esc(analysis.verdict)}</span>
-          </div>
-          <button class="rm" title="Remove from watchlist" onclick="removeTicker('{tkr}')">&times;</button>
+          {price}
+          {chg}
         </div>
+        <span class="chev">▾</span>
       </header>
-      <div class="dims">{dims}</div>
-      {signals_block}
-      {news_sent}
-      {_headlines(data)}
+      {_range_bar(analysis)}
+      {teaser}
+      <div class="card-body">
+        {thesis}
+        <div class="dims">{dims}</div>
+        {_highlight_lists(analysis)}
+        {signals_block}
+        {news_sent}
+        {_headlines(data)}
+        <div class="card-actions">
+          <button class="rm" onclick="removeTicker('{tkr}')">✕ Remove {tkr} from watchlist</button>
+        </div>
+      </div>
     </article>"""
+
+
+# ---------------------------------------------------------------------------
+# Portfolio pulse strip
+# ---------------------------------------------------------------------------
+
+def _stats_strip(entries: List[Entry]) -> str:
+    analyses = [a for a, _ in entries]
+    if not analyses:
+        return ""
+
+    tiles = []
+
+    scores = [a.composite for a in analyses if a.composite is not None]
+    if scores:
+        avg = sum(scores) / len(scores)
+        tiles.append(
+            f'<div class="stat"><span class="stat-val {_score_class(avg)}">{avg:.0f}</span>'
+            '<span class="stat-lab">Avg score</span></div>'
+        )
+
+    movers = []
+    for a in analyses:
+        _, txt, val = _chg_bits(a.change)
+        if val is not None:
+            movers.append((a.ticker, val, txt))
+    if movers:
+        up = sum(1 for _, v, _t in movers if v > 0)
+        down = sum(1 for _, v, _t in movers if v < 0)
+        net_cls = "up" if up > down else "down" if down > up else "flat"
+        tiles.append(
+            f'<div class="stat"><span class="stat-val {net_cls}">{up}▲ {down}▼</span>'
+            '<span class="stat-lab">Breadth</span></div>'
+        )
+        best = max(movers, key=lambda m: m[1])
+        tiles.append(
+            f'<div class="stat"><span class="stat-val up">{_esc(best[0])} {best[2]}</span>'
+            '<span class="stat-lab">Top mover</span></div>'
+        )
+        if len(movers) > 1:
+            worst = min(movers, key=lambda m: m[1])
+            tiles.append(
+                f'<div class="stat"><span class="stat-val down">{_esc(worst[0])} {worst[2]}</span>'
+                '<span class="stat-lab">Laggard</span></div>'
+            )
+
+    risky = sum(1 for a in analyses if a.risk and a.risk.level in ("Elevated", "High"))
+    if risky and len(tiles) < 4:
+        tiles.append(
+            f'<div class="stat"><span class="stat-val bad">{risky}</span>'
+            '<span class="stat-lab">Elevated risk</span></div>'
+        )
+
+    if not tiles:
+        return ""
+    return '<div class="stats">' + "".join(tiles) + "</div>"
 
 
 # ---------------------------------------------------------------------------
@@ -146,13 +311,16 @@ def _moves_section(entries: List[Entry]) -> str:
     if not rows:
         return '<p class="muted">No price-change data available.</p>'
 
+    max_abs = max(abs(c) for _, c in rows) or 1.0
     out = []
     for a, chg in rows:
         cls = "up" if chg > 0 else "down" if chg < 0 else "flat"
         sign = "+" if chg > 0 else ""
+        width = abs(chg) / max_abs * 100.0
         out.append(
             '<div class="move-row">'
             f'<span class="m-tkr">{_esc(a.ticker)}</span>'
+            f'<span class="m-bar"><span class="m-fill {cls}" style="width:{width:.0f}%"></span></span>'
             f'<span class="m-price">{_esc(a.price or "-")}</span>'
             f'<span class="m-chg {cls}">{sign}{chg:.2f}%</span>'
             f'<span class="m-verdict">{_esc(a.verdict)}</span>'
@@ -209,32 +377,41 @@ def _market_recs_section(analyses: Optional[List[Analysis]]) -> str:
 
     # Momentum-ish signals are de-emphasised in the "why" so reasons reflect
     # the fundamental/analyst case, not just price action.
-    momentum_words = ("52-week", "200-day", "Oversold", "Overbought")
+    momentum_words = ("52-week", "200-day", "50 & 200", "Oversold", "Overbought")
 
     rows = []
     for a in analyses:
         rank_score = a.quality_score if a.quality_score is not None else a.composite
         cls = _score_class(rank_score)
         score = "n/a" if rank_score is None else f"{rank_score:.0f}"
-        reasons = [
+        reasons = a.strengths[:2] or [
             s.text
             for s in a.signals
             if s.sentiment == "bullish" and not any(w in s.text for w in momentum_words)
-        ]
-        why = (" · ".join(reasons))[:80]
+        ][:2]
+        why = " · ".join(reasons)[:110]
         company = _esc(a.company)[:28]
         tkr = _esc(a.ticker)
+        risk_chip = ""
+        if a.risk is not None:
+            risk_chip = (
+                f' <span class="mini-risk {_RISK_CLASS.get(a.risk.level, "r-mod")}">'
+                f"{_esc(a.risk.level)} risk</span>"
+            )
+        why_html = f'<span class="rec-why">{_esc(why)}</span>' if why else ""
+        company_html = f'<span class="rec-co">{company}</span>' if company else ""
         rows.append(
             '<div class="rec-row">'
             f'<span class="rec-badge {cls}">{score}</span>'
-            f'<span class="rec-tkr">{tkr}</span>'
-            f'<span class="rec-why"><b>{_esc(a.verdict)}</b>'
-            f'{(" · " + _esc(company)) if company else ""}'
-            f'{(" · " + _esc(why)) if why else ""}</span>'
+            '<span class="rec-main">'
+            f'<span class="rec-line1"><span class="rec-tkr">{tkr}</span>'
+            f'<b>{_esc(a.verdict)}</b>{risk_chip}{company_html}</span>'
+            f"{why_html}"
+            "</span>"
             f'<button class="add-mini" title="Add to watchlist" onclick="addTicker(\'{tkr}\')">+</button>'
             "</div>"
         )
-    return '<div class="moves">' + "".join(rows) + "</div>"
+    return '<div class="moves recs">' + "".join(rows) + "</div>"
 
 
 def _top_news_section(items: Optional[List[dict]]) -> str:
@@ -304,7 +481,12 @@ def _recommendations_section(entries: List[Entry]) -> str:
             continue
         rows = []
         for a in items:
-            why = reasons(a, sentiment) or reasons(a, "neutral")
+            why = (
+                (a.strengths[0] if sentiment == "bullish" and a.strengths else "")
+                or (a.concerns[0] if sentiment == "bearish" and a.concerns else "")
+                or reasons(a, sentiment)
+                or reasons(a, "neutral")
+            )
             score = "n/a" if a.composite is None else f"{a.composite:.0f}"
             rows.append(
                 '<div class="rec-row">'
@@ -314,7 +496,8 @@ def _recommendations_section(entries: List[Entry]) -> str:
                 "</div>"
             )
         out.append(
-            f'<div class="rec-group"><h3 class="rec-title {cls}">{_esc(title)}</h3>'
+            f'<div class="rec-group"><h3 class="rec-title {cls}">{_esc(title)}'
+            f'<span class="count">{len(items)}</span></h3>'
             + "".join(rows)
             + "</div>"
         )
@@ -381,107 +564,216 @@ def _news_section(entries: List[Entry], limit: int = 40) -> str:
 # ---------------------------------------------------------------------------
 
 _CSS = """
-:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-body {
-  margin: 0; padding: 14px 14px 40px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #0d1117; color: #e6edf3; line-height: 1.4;
+:root {
+  color-scheme: dark;
+  --bg: #0a0e15; --panel: #10161f; --card: #121a26; --card2: #0e1520;
+  --border: #1e293b; --border2: #2a3a52;
+  --text: #e9eef6; --muted: #8b9bb0; --accent: #58a6ff;
+  --good: #3fb950; --mid: #d29922; --bad: #f85149; --elev: #f0883e;
 }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; padding: 0 14px 48px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.45;
+}
+.sticky-head { position: sticky; top: 0; z-index: 30; margin: 0 -14px 14px;
+  padding: 10px 14px 10px; background: rgba(10,14,21,.92);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border); }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-h1 { font-size: 1.35rem; margin: 0; }
-.sub { color: #8b949e; font-size: .78rem; margin: 2px 0 12px; }
-.muted { color: #8b949e; font-size: .85rem; }
-.gear { background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
-  border-radius: 8px; padding: 6px 10px; font-size: 1rem; cursor: pointer; }
-.tabs { display: flex; gap: 6px; margin: 6px 0 16px; }
-.tab { flex: 1; text-align: center; padding: 9px; border-radius: 9px;
-  background: #161b22; border: 1px solid #30363d; color: #8b949e;
-  font-weight: 600; font-size: .9rem; cursor: pointer; }
-.tab.active { background: #1f6feb22; border-color: #1f6feb; color: #58a6ff; }
+h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.02em;
+  background: linear-gradient(90deg, #79b8ff, #58a6ff 45%, #3fb950);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { color: var(--muted); font-size: .74rem; margin: 2px 0 8px; }
+.sub b { color: var(--text); font-weight: 600; }
+#updated-rel:not(:empty)::before { content: "· "; }
+.muted { color: var(--muted); font-size: .85rem; }
+.gear { background: var(--panel); border: 1px solid var(--border); color: #c9d1d9;
+  border-radius: 10px; padding: 6px 11px; font-size: 1rem; cursor: pointer; }
+.tabs { display: flex; gap: 6px; }
+.tab { flex: 1; text-align: center; padding: 9px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  font-weight: 600; font-size: .9rem; cursor: pointer; transition: all .15s; }
+.tab.active { background: rgba(31,111,235,.16); border-color: #1f6feb; color: var(--accent); }
 .panel { display: none; }
-.panel.active { display: block; }
-.addbar { display: flex; gap: 8px; margin-bottom: 14px; }
-.addbar input { flex: 1; background: #0d1117; border: 1px solid #30363d;
-  color: #e6edf3; border-radius: 9px; padding: 10px 12px; font-size: 1rem; text-transform: uppercase; }
-.btn { background: #238636; border: 0; color: #fff; border-radius: 9px;
-  padding: 10px 16px; font-weight: 600; font-size: .95rem; cursor: pointer; }
-.btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
-.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
-.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ticker { font-size: 1.25rem; font-weight: 700; }
-.company { color: #8b949e; font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.price { color: #c9d1d9; font-size: .8rem; }
-.head-right { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; }
-.badge { text-align: center; border-radius: 10px; padding: 6px 12px; min-width: 80px; }
-.badge .num { display: block; font-size: 1.5rem; font-weight: 800; line-height: 1; }
-.badge .verdict { font-size: .64rem; text-transform: uppercase; letter-spacing: .04em; }
-.rm { background: #21262d; border: 1px solid #30363d; color: #8b949e;
-  border-radius: 8px; width: 30px; height: 30px; font-size: 1.1rem; line-height: 1; cursor: pointer; }
-.rm:hover { color: #f85149; border-color: #f85149; }
-.good { background: rgba(63,185,80,.16); color: #3fb950; }
-.mid  { background: rgba(210,153,34,.16); color: #d29922; }
-.bad  { background: rgba(248,81,73,.16);  color: #f85149; }
-.na   { background: rgba(139,148,158,.16); color: #8b949e; }
+.panel.active { display: block; animation: fadein .18s ease; }
+@keyframes fadein { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; } }
+
+/* Portfolio pulse */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px; margin-bottom: 12px; }
+.stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.stat-val { font-size: 1.05rem; font-weight: 800; letter-spacing: -.01em; }
+.stats .stat-val { background: none; }
+.stat-val.good { color: var(--good); } .stat-val.mid { color: var(--mid); }
+.stat-val.bad { color: var(--bad); }
+.stat-val.up { color: var(--good); } .stat-val.down { color: var(--bad); }
+.stat-lab { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; }
+
+/* Add + toolbar */
+.addbar { display: flex; gap: 8px; margin-bottom: 10px; }
+.addbar input { flex: 1; background: var(--card2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; padding: 11px 12px; font-size: 1rem; text-transform: uppercase; }
+.addbar input:focus, .toolbar input:focus { outline: none; border-color: #1f6feb; }
+.btn { background: #238636; border: 0; color: #fff; border-radius: 10px;
+  padding: 11px 18px; font-weight: 600; font-size: .95rem; cursor: pointer; }
+.btn.secondary { background: var(--panel); border: 1px solid var(--border); color: #c9d1d9; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 14px; }
+.toolbar input { flex: 1; background: var(--card2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; padding: 9px 12px; font-size: .9rem; }
+.toolbar select { background: var(--panel); border: 1px solid var(--border); color: #c9d1d9;
+  border-radius: 10px; padding: 9px 10px; font-size: .85rem; font-weight: 600; }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 13px 14px; margin-bottom: 12px; transition: border-color .15s; }
+.card.open { border-color: var(--border2); }
+.card-head { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.ring { position: relative; width: 46px; height: 46px; flex-shrink: 0; }
+.ring svg { width: 46px; height: 46px; transform: rotate(-90deg); }
+.ring-bg { fill: none; stroke: #1d2735; stroke-width: 3.4; }
+.ring-fg { fill: none; stroke: currentColor; stroke-width: 3.4; stroke-linecap: round; }
+.ring.good { color: var(--good); } .ring.mid { color: var(--mid); }
+.ring.bad { color: var(--bad); } .ring.na { color: #4b586b; }
+.ring-num { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; font-size: .92rem; font-weight: 800; color: var(--text); }
+.title { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.t-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ticker { font-size: 1.15rem; font-weight: 800; letter-spacing: -.01em; }
+.company { color: var(--muted); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; }
+.pill.good, .good { background: rgba(63,185,80,.15); color: var(--good); }
+.pill.mid, .mid  { background: rgba(210,153,34,.15); color: var(--mid); }
+.pill.bad, .bad  { background: rgba(248,81,73,.15);  color: var(--bad); }
+.na   { background: rgba(139,148,158,.15); color: var(--muted); }
+.pill.risk.r-low  { background: rgba(63,185,80,.12);  color: var(--good); }
+.pill.risk.r-mod  { background: rgba(210,153,34,.12); color: var(--mid); }
+.pill.risk.r-elev { background: rgba(240,136,62,.14); color: var(--elev); }
+.pill.risk.r-high { background: rgba(248,81,73,.14);  color: var(--bad); }
+.mini-risk { font-size: .62rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.mini-risk.r-low { color: var(--good); background: rgba(63,185,80,.12); }
+.mini-risk.r-mod { color: var(--mid); background: rgba(210,153,34,.12); }
+.mini-risk.r-elev { color: var(--elev); background: rgba(240,136,62,.14); }
+.mini-risk.r-high { color: var(--bad); background: rgba(248,81,73,.14); }
+.head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+.price { font-size: .95rem; font-weight: 700; }
+.chg { font-size: .78rem; font-weight: 700; }
+.chg.up, .up { color: var(--good); } .chg.down, .down { color: var(--bad); }
+.chg.flat, .flat { color: var(--muted); }
+.chev { color: var(--muted); font-size: .8rem; transition: transform .18s; flex-shrink: 0; }
+.card.open .chev { transform: rotate(180deg); }
+
+.range52 { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; font-size: .66rem; color: var(--muted); }
+.r-track { flex: 1; height: 5px; border-radius: 4px; position: relative;
+  background: linear-gradient(90deg, rgba(248,81,73,.5), rgba(210,153,34,.45), rgba(63,185,80,.5)); }
+.r-dot { position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 11px; height: 11px; border-radius: 50%; background: #e9eef6;
+  border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--border2); }
+.r-pos { font-weight: 700; color: var(--text); min-width: 30px; text-align: right; }
+
+.teaser { margin-top: 9px; display: flex; flex-direction: column; gap: 3px; }
+.card.open .teaser { display: none; }
+.tz { font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tz.plus { color: var(--good); } .tz.minus { color: var(--bad); }
+
+.card-body { display: none; }
+.card.open .card-body { display: block; animation: fadein .18s ease; }
+.thesis { margin: 12px 0 2px; font-size: .82rem; color: #c7d2e0;
+  border-left: 3px solid #1f6feb; padding: 2px 0 2px 10px; }
 .dims { margin: 12px 0 4px; }
-.dim { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: .78rem; }
-.dim-name { flex: 0 0 116px; color: #8b949e; }
-.track { flex: 1; height: 8px; background: #21262d; border-radius: 5px; overflow: hidden; }
+.dim-wrap { margin: 7px 0; }
+.dim { display: flex; align-items: center; gap: 8px; font-size: .78rem; }
+.dim-name { flex: 0 0 112px; color: var(--muted); }
+.track { flex: 1; height: 8px; background: #1a2332; border-radius: 5px; overflow: hidden; }
 .fill { display: block; height: 100%; border-radius: 5px; }
-.fill.good { background: #3fb950; } .fill.mid { background: #d29922; }
-.fill.bad { background: #f85149; } .fill.na { background: #30363d; }
+.fill.good { background: var(--good); } .fill.mid { background: var(--mid); }
+.fill.bad { background: var(--bad); } .fill.na { background: #30363d; }
 .dim-val { flex: 0 0 28px; text-align: right; color: #c9d1d9; }
+.dim-detail { margin: 2px 0 0 120px; color: #6b7a8f; font-size: .66rem; }
+.hl { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 10px 0 4px; }
+@media (min-width: 520px) { .hl { grid-template-columns: 1fr 1fr; gap: 10px; } }
+.hl-col h4 { margin: 6px 0 2px; font-size: .7rem; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); }
+.hl-col ul { margin: 0; padding: 0; list-style: none; }
+.hl-col li { font-size: .78rem; margin: 3px 0; padding-left: 16px; position: relative; }
+.hl-plus::before { content: "＋"; position: absolute; left: 0; color: var(--good); font-weight: 700; }
+.hl-minus::before { content: "−"; position: absolute; left: 0; color: var(--bad); font-weight: 700; }
 .signals { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
-.chip { font-size: .72rem; padding: 3px 8px; border-radius: 999px; background: #21262d; }
-.chip.bullish { color: #3fb950; } .chip.bearish { color: #f85149; } .chip.neutral { color: #d29922; }
-.news-sent { font-size: .76rem; margin: 8px 0 0; }
+.chip { font-size: .72rem; padding: 3px 9px; border-radius: 999px; background: #1a2332; }
+.chip.bullish { color: var(--good); } .chip.bearish { color: var(--bad); } .chip.neutral { color: var(--mid); }
+.news-sent { font-size: .76rem; margin: 8px 0 0; background: none; }
 .news { margin: 8px 0 0; padding-left: 18px; font-size: .78rem; }
 .news li { margin: 3px 0; }
-.news a { color: #58a6ff; text-decoration: none; }
-.src { color: #8b949e; }
-h2.section { font-size: 1rem; margin: 18px 0 8px; color: #c9d1d9; }
-.moves { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; }
-.move-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid #21262d; font-size: .86rem; }
+.news a { color: var(--accent); text-decoration: none; }
+.src { color: var(--muted); }
+.card-actions { margin-top: 12px; }
+.rm { background: rgba(248,81,73,.08); border: 1px solid rgba(248,81,73,.35); color: var(--bad);
+  border-radius: 9px; padding: 8px 14px; font-size: .8rem; font-weight: 600; cursor: pointer; }
+
+/* Insights */
+h2.section { font-size: .98rem; margin: 20px 0 8px; color: #c9d1d9; }
+h2.section:first-child { margin-top: 4px; }
+.moves { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.move-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid #1a2332; font-size: .86rem; }
 .move-row:first-child { border-top: 0; }
 .m-tkr { font-weight: 700; flex: 0 0 56px; }
-.m-co { flex: 1; color: #8b949e; font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-co { flex: 1; color: var(--muted); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-bar { flex: 1; height: 6px; background: #1a2332; border-radius: 4px; overflow: hidden; }
+.m-fill { display: block; height: 100%; border-radius: 4px; }
+.m-fill.up { background: var(--good); } .m-fill.down { background: var(--bad); } .m-fill.flat { background: #30363d; }
 .m-price { flex: 0 0 64px; color: #c9d1d9; text-align: right; }
 .m-chg { flex: 0 0 64px; font-weight: 700; text-align: right; }
-.m-chg.up { color: #3fb950; } .m-chg.down { color: #f85149; } .m-chg.flat { color: #8b949e; }
-.m-verdict { color: #8b949e; font-size: .78rem; margin-left: auto; }
-.add-mini { flex: 0 0 28px; background: #21262d; border: 1px solid #30363d; color: #3fb950;
-  border-radius: 7px; height: 26px; font-size: 1rem; line-height: 1; cursor: pointer; }
-.add-mini:hover { border-color: #3fb950; }
+.m-chg.up { color: var(--good); } .m-chg.down { color: var(--bad); } .m-chg.flat { color: var(--muted); }
+.m-verdict { color: var(--muted); font-size: .78rem; margin-left: auto; }
+.add-mini { flex: 0 0 30px; background: #1a2332; border: 1px solid var(--border); color: var(--good);
+  border-radius: 8px; height: 28px; font-size: 1rem; line-height: 1; cursor: pointer; }
+.add-mini:hover { border-color: var(--good); }
 .rec-group { margin-bottom: 14px; }
-.rec-title { font-size: .85rem; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; }
-.rec-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #21262d; font-size: .84rem; }
-.rec-badge { flex: 0 0 36px; text-align: center; border-radius: 7px; padding: 3px 0; font-weight: 700; font-size: .82rem; }
+.rec-title { font-size: .82rem; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .04em;
+  display: flex; align-items: center; gap: 8px; background: none; }
+.rec-title .count { font-size: .68rem; background: #1a2332; color: var(--muted);
+  border-radius: 999px; padding: 1px 8px; }
+.rec-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid #1a2332; font-size: .84rem; }
+.recs .rec-row { padding: 10px 12px; border-top: 1px solid #1a2332; }
+.recs .rec-row:first-child { border-top: 0; }
+.rec-badge { flex: 0 0 38px; text-align: center; border-radius: 8px; padding: 4px 0; font-weight: 800; font-size: .84rem; }
 .rec-tkr { font-weight: 700; flex: 0 0 56px; }
-.rec-why { color: #8b949e; font-size: .78rem; }
-.news-feed { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; }
-.news-row { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px; border-top: 1px solid #21262d; font-size: .82rem; }
+.rec-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rec-line1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .82rem; }
+.rec-line1 .rec-tkr { flex: none; }
+.rec-co { color: var(--muted); font-size: .74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-why { color: var(--muted); font-size: .76rem; }
+.news-feed { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.news-row { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px; border-top: 1px solid #1a2332; font-size: .82rem; }
 .news-row:first-child { border-top: 0; }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; }
-.dot.good { background: #3fb950; } .dot.mid { background: #8b949e; } .dot.bad { background: #f85149; }
-.n-rank { flex: 0 0 20px; color: #8b949e; font-weight: 700; text-align: right; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; padding: 0; }
+.dot.good { background: var(--good); } .dot.mid { background: #8b949e; } .dot.bad { background: var(--bad); }
+.n-rank { flex: 0 0 20px; color: var(--muted); font-weight: 700; text-align: right; background: none; }
 .n-tkr { font-weight: 700; flex: 0 0 50px; }
-.n-head { flex: 1; } .n-head a { color: #58a6ff; text-decoration: none; }
-.n-meta { color: #8b949e; font-size: .7rem; flex: 0 0 auto; }
-footer { color: #8b949e; font-size: .72rem; text-align: center; margin-top: 18px; }
-.overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+.n-head { flex: 1; } .n-head a { color: var(--accent); text-decoration: none; }
+.n-meta { color: var(--muted); font-size: .7rem; flex: 0 0 auto; }
+footer { color: var(--muted); font-size: .72rem; text-align: center; margin-top: 22px; }
+
+/* Modal + toast */
+.overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65);
   align-items: center; justify-content: center; padding: 20px; z-index: 50; }
 .overlay.show { display: flex; }
-.modal { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 18px; max-width: 420px; width: 100%; }
+.modal { background: var(--card); border: 1px solid var(--border2); border-radius: 16px; padding: 18px; max-width: 420px; width: 100%; }
 .modal h2 { margin: 0 0 8px; font-size: 1.1rem; }
-.modal p { font-size: .82rem; color: #8b949e; }
-.modal input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
-  border-radius: 9px; padding: 10px; font-size: .95rem; margin: 8px 0; }
+.modal p { font-size: .82rem; color: var(--muted); }
+.modal a { color: var(--accent); }
+.modal input { width: 100%; background: var(--card2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 10px; padding: 10px; font-size: .95rem; margin: 8px 0; }
 .modal .row { display: flex; gap: 8px; margin-top: 6px; }
-.warn { color: #d29922; font-size: .76rem; }
+.warn { color: var(--mid); font-size: .76rem; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  background: #21262d; border: 1px solid #30363d; color: #e6edf3; padding: 10px 16px;
-  border-radius: 10px; font-size: .85rem; opacity: 0; transition: opacity .2s; z-index: 60; pointer-events: none; }
+  background: #1a2332; border: 1px solid var(--border2); color: var(--text); padding: 10px 16px;
+  border-radius: 10px; font-size: .85rem; opacity: 0; transition: opacity .2s; z-index: 60; pointer-events: none;
+  max-width: calc(100vw - 40px); }
 .toast.show { opacity: 1; }
 """
 
@@ -490,14 +782,60 @@ _JS = """
 const REPO = {owner: "__OWNER__", repo: "__REPO__", branch: "__BRANCH__", path: "__PATH__"};
 const TOKEN_KEY = "stocksync_gh_token";
 const REFRESH_MS = __REFRESH__;
+const GENERATED_MS = __EPOCH__;
 let modalOpen = false;
 
 function $(id){ return document.getElementById(id); }
 function getToken(){ return localStorage.getItem(TOKEN_KEY) || ""; }
+function store(key, val){ try { localStorage.setItem(key, val); } catch(_){} }
+function read(key){ try { return localStorage.getItem(key); } catch(_){ return null; } }
 
-function showTab(name){
+function showTab(name, persist){
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + name));
+  if (persist !== false) store("ss_tab", name);
+}
+
+function toggleCard(tkr){
+  const card = $("card-" + tkr);
+  if (!card) return;
+  card.classList.toggle("open");
+  const open = Array.from(document.querySelectorAll(".card.open")).map(c => c.dataset.tkr);
+  store("ss_open", JSON.stringify(open));
+}
+
+function applySort(persist){
+  const sel = $("sort-select");
+  const wrap = $("cards");
+  if (!sel || !wrap) return;
+  const mode = sel.value;
+  const keys = {
+    score: c => -parseFloat(c.dataset.score || "-1"),
+    chg:   c => -parseFloat(c.dataset.chg || "-999"),
+    risk:  c => parseFloat(c.dataset.risk || "50"),
+    tkr:   c => c.dataset.tkr || "",
+  };
+  const key = keys[mode] || keys.score;
+  const cards = Array.from(wrap.querySelectorAll(".card"));
+  cards.sort((a, b) => { const ka = key(a), kb = key(b); return ka < kb ? -1 : ka > kb ? 1 : 0; });
+  cards.forEach(c => wrap.appendChild(c));
+  if (persist !== false) store("ss_sort", mode);
+}
+
+function applyFilter(){
+  const q = (($("filter-input") || {}).value || "").trim().toLowerCase();
+  document.querySelectorAll("#cards .card").forEach(c => {
+    c.style.display = (!q || (c.dataset.name || "").indexOf(q) !== -1) ? "" : "none";
+  });
+}
+
+function relTime(){
+  const el = $("updated-rel");
+  if (!el || !GENERATED_MS) return;
+  const mins = Math.max(0, Math.round((Date.now() - GENERATED_MS) / 60000));
+  el.textContent = mins < 1 ? "just now"
+    : mins < 60 ? mins + "m ago"
+    : Math.floor(mins / 60) + "h " + (mins % 60) + "m ago";
 }
 
 function toast(msg){
@@ -583,15 +921,35 @@ async function removeTicker(sym){
 }
 
 // Auto-refresh to keep up with scheduled rebuilds, but never interrupt typing
-// or an open dialog.
+// or an open dialog — and come back to the same scroll position.
 setInterval(() => {
   if (modalOpen) return;
-  if (document.activeElement && document.activeElement.id === "add-input") return;
+  const ae = document.activeElement;
+  if (ae && (ae.id === "add-input" || ae.id === "filter-input")) return;
+  try { sessionStorage.setItem("ss_scroll", String(window.scrollY)); } catch(_){}
   location.reload();
 }, REFRESH_MS);
 
 document.addEventListener("DOMContentLoaded", () => {
   $("add-input").addEventListener("keydown", e => { if (e.key === "Enter") addTicker(); });
+  const fi = $("filter-input");
+  if (fi) fi.addEventListener("input", applyFilter);
+
+  // Restore UI state across auto-refresh reloads.
+  if (read("ss_tab") === "insights") showTab("insights", false);
+  const sort = read("ss_sort");
+  if (sort && $("sort-select")) { $("sort-select").value = sort; applySort(false); }
+  let open = [];
+  try { open = JSON.parse(read("ss_open") || "[]"); } catch(_){}
+  open.forEach(t => { const c = $("card-" + t); if (c) c.classList.add("open"); });
+  try {
+    const sy = parseInt(sessionStorage.getItem("ss_scroll") || "0", 10);
+    sessionStorage.removeItem("ss_scroll");
+    if (sy) window.scrollTo(0, sy);
+  } catch(_){}
+
+  relTime();
+  setInterval(relTime, 30000);
 });
 """
 
@@ -613,12 +971,15 @@ def render_html(
     movers: Optional[List[Tuple[str, List[dict]]]] = None,
     market_recs: Optional[List[Analysis]] = None,
     market_news: Optional[List[dict]] = None,
+    generated_epoch: Optional[float] = None,
 ) -> str:
     """Render the full two-tab HTML dashboard.
 
     *repo* is ``"owner/name"`` (used by the in-page add/remove buttons via the
     GitHub API); when omitted the buttons render but report that the repo is
-    not configured.
+    not configured. *generated_epoch* (seconds since the Unix epoch) powers
+    the live "updated Xm ago" readout; when omitted only the static
+    *generated_at* string is shown.
     """
     ranked = sorted(
         entries,
@@ -643,7 +1004,22 @@ def render_html(
         .replace("__BRANCH__", _esc(branch or ""))
         .replace("__PATH__", _esc(watchlist_path))
         .replace("__REFRESH__", str(int(refresh_seconds) * 1000))
+        .replace("__EPOCH__", str(int(generated_epoch * 1000)) if generated_epoch else "0")
     )
+
+    stats = _stats_strip(ranked)
+    toolbar = ""
+    if len(ranked) > 1:
+        toolbar = """
+  <div class="toolbar">
+    <input id="filter-input" placeholder="Filter tickers…" autocomplete="off">
+    <select id="sort-select" onchange="applySort()">
+      <option value="score">Sort: Score</option>
+      <option value="chg">Sort: % Change</option>
+      <option value="risk">Sort: Risk</option>
+      <option value="tkr">Sort: Ticker</option>
+    </select>
+  </div>"""
 
     moves = _moves_section(ranked)
     recs = _recommendations_section(ranked)
@@ -659,29 +1035,34 @@ def render_html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0d1117">
+<meta name="theme-color" content="#0a0e15">
 <title>{_esc(title)}</title>
 <style>{_CSS}</style>
 </head>
 <body>
-<div class="topbar">
-  <h1>{_esc(title)}</h1>
-  <button class="gear" onclick="openSettings()" title="Settings">&#9881;</button>
+<div class="sticky-head">
+  <div class="topbar">
+    <h1>{_esc(title)}</h1>
+    <button class="gear" onclick="openSettings()" title="Settings">&#9881;</button>
+  </div>
+  <p class="sub"><b>{_esc(len(ranked))}</b> tickers · updated {_esc(generated_at)} <span id="updated-rel"></span> · auto-refresh {int(refresh_seconds)//60}m</p>
+  <div class="tabs">
+    <div class="tab active" data-tab="watchlist" onclick="showTab('watchlist')">Watchlist</div>
+    <div class="tab" data-tab="insights" onclick="showTab('insights')">Insights</div>
+  </div>
 </div>
-<p class="sub">{_esc(len(ranked))} tickers · updated {_esc(generated_at)} · auto-refresh {int(refresh_seconds)//60}m</p>
 {skipped_note}
 
-<div class="tabs">
-  <div class="tab active" data-tab="watchlist" onclick="showTab('watchlist')">Watchlist</div>
-  <div class="tab" data-tab="insights" onclick="showTab('insights')">Insights</div>
-</div>
-
 <section id="panel-watchlist" class="panel active">
+  {stats}
   <div class="addbar">
     <input id="add-input" placeholder="Add ticker (e.g. AAPL)" autocapitalize="characters" autocomplete="off">
     <button class="btn" onclick="addTicker()">Add</button>
   </div>
+  {toolbar}
+  <div id="cards">
   {cards}
+  </div>
 </section>
 
 <section id="panel-insights" class="panel">

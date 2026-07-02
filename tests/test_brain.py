@@ -120,3 +120,131 @@ def test_quality_score_high_for_strong_fundamentals():
 def test_verdict_thresholds():
     good = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
     assert good.verdict in {"Strong", "Favorable", "Neutral / Mixed"}
+
+
+# ---------------------------------------------------------------------------
+# Risk assessment
+# ---------------------------------------------------------------------------
+
+def test_risk_higher_for_risky_stock():
+    good = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    bad = analyze(make_data(fixtures.RISKY_FUNDAMENTALS))
+    assert good.risk is not None and bad.risk is not None
+    assert bad.risk.score > good.risk.score
+    assert bad.risk.level in {"Elevated", "High"}
+    assert good.risk.level in {"Low", "Moderate"}
+
+
+def test_risk_factors_are_explained():
+    a = analyze(make_data(fixtures.RISKY_FUNDAMENTALS))
+    text = " ".join(a.risk.factors).lower()
+    # The shorted, levered, unprofitable fixture should name its problems.
+    assert "short" in text
+    assert "leverage" in text or "debt" in text
+    assert "unprofitable" in text or "margin" in text
+
+
+def test_risk_levels_cover_all_scores():
+    from stocksync.brain import assess_risk
+    calm = assess_risk({"Beta": "0.5", "Debt/Eq": "0.1", "Profit Margin": "25%"})
+    wild = assess_risk({
+        "Beta": "2.5", "Short Float": "25%", "Debt/Eq": "4.0",
+        "Profit Margin": "-30%", "Price": "2.50", "Volatility": "9.1% 10.2%",
+    })
+    assert calm.level == "Low"
+    assert wild.level == "High"
+    assert 0 <= calm.score < wild.score <= 100
+
+
+# ---------------------------------------------------------------------------
+# Strengths, concerns and thesis
+# ---------------------------------------------------------------------------
+
+def test_strengths_and_concerns_carry_numbers():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    assert a.strengths, "AAPL fixture should surface strengths"
+    # ROE 150% is the standout fact and should appear with its number.
+    assert any("150" in s for s in a.strengths)
+    # The rich P/B / PEG should register as a concern or leave concerns valid.
+    assert all(isinstance(c, str) and c for c in a.concerns)
+
+
+def test_concerns_for_weak_stock():
+    a = analyze(make_data(fixtures.RISKY_FUNDAMENTALS))
+    assert a.concerns
+    text = " ".join(a.concerns).lower()
+    assert "losing money" in text or "roe" in text or "shrink" in text
+
+
+def test_thesis_mentions_ticker_and_risk():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS, fixtures.AAPL_NEWS))
+    assert a.thesis
+    assert "AAPL" in a.thesis
+    assert "risk" in a.thesis.lower()
+    assert "news flow" in a.thesis.lower()
+
+
+def test_thesis_insufficient_data():
+    a = analyze(make_data({"Ticker": "X"}))
+    assert "not enough data" in a.thesis.lower()
+
+
+def test_thesis_flags_momentum_ahead_of_quality():
+    hot_but_weak = {
+        "Ticker": "HOT", "Price": "10.00",
+        "P/E": "200.00", "PEG": "8.00", "Profit Margin": "-20.00%",
+        "ROE": "-10.00%", "EPS next 5Y": "-5.00%", "Recom": "3.50",
+        "RSI (14)": "85.00", "SMA200": "60.00%", "Perf Year": "300.00%",
+        "Debt/Eq": "5.00",
+    }
+    a = analyze(make_data(hot_but_weak))
+    assert "ahead of the fundamentals" in a.thesis
+
+
+# ---------------------------------------------------------------------------
+# 52-week range position & dimension transparency
+# ---------------------------------------------------------------------------
+
+def test_range_position_between_0_and_100():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    # AAPL fixture is 2.1% off its high and 38.5% above its low -> near the top.
+    assert a.range_position is not None
+    assert 70 <= a.range_position <= 100
+
+
+def test_range_position_missing_when_no_data():
+    a = analyze(make_data({"Ticker": "X", "Price": "10.00"}))
+    assert a.range_position is None
+
+
+def test_dimensions_expose_raw_values():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    val = a.dimension("Valuation")
+    assert val.raw.get("P/E") == "31.50"
+    analyst = a.dimension("Analyst")
+    assert "Target upside" in analyst.raw  # derived value still surfaced
+
+
+def test_sector_surfaced():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    assert a.sector == "Technology"
+
+
+# ---------------------------------------------------------------------------
+# New signals
+# ---------------------------------------------------------------------------
+
+def test_uptrend_intact_signal_when_above_both_smas():
+    a = analyze(make_data(fixtures.AAPL_FUNDAMENTALS))
+    texts = " ".join(s.text for s in a.signals)
+    assert "50 & 200-day" in texts
+
+
+def test_deep_drawdown_signal():
+    a = analyze(make_data({"Ticker": "DD", "Price": "10.00", "52W High": "-65.00%"}))
+    assert any("from 52-week high" in s.text for s in a.signals)
+
+
+def test_unusual_volume_signal():
+    a = analyze(make_data({"Ticker": "V", "Price": "10.00", "Rel Volume": "3.10"}))
+    assert any("Unusual volume" in s.text for s in a.signals)

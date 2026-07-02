@@ -86,6 +86,25 @@ def _sentiment_color(sentiment: str) -> str:
     return {"bullish": "green", "bearish": "red"}.get(sentiment, "yellow")
 
 
+_RISK_COLORS = {"Low": "green", "Moderate": "yellow", "Elevated": "yellow", "High": "red"}
+
+
+def _wrap(text: str, width: int) -> List[str]:
+    """Simple greedy word-wrap (no textwrap dependency on ANSI-free text)."""
+    words = text.split()
+    lines: List[str] = []
+    current = ""
+    for word in words:
+        if current and len(current) + 1 + len(word) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = f"{current} {word}".strip()
+    if current:
+        lines.append(current)
+    return lines
+
+
 def render_analysis(analysis: Analysis, *, color: bool = True, note: Optional[str] = None) -> str:
     """Render a detailed, multi-line report for a single ticker."""
     lines: List[str] = []
@@ -101,16 +120,26 @@ def render_analysis(analysis: Analysis, *, color: bool = True, note: Optional[st
     if analysis.price:
         chg = f" ({analysis.change})" if analysis.change else ""
         price_bit = "   " + _paint(f"{analysis.price}{chg}", color, "dim")
+    risk_bit = ""
+    if analysis.risk is not None:
+        risk_col = _RISK_COLORS.get(analysis.risk.level, "yellow")
+        risk_bit = "   " + _paint(f"Risk: {analysis.risk.level}", color, risk_col)
     lines.append(
         _paint("Score: ", color, "bold")
         + _paint(comp_txt, color, "bold", comp_col)
         + "   "
         + _paint(f"[{analysis.verdict}]", color, comp_col)
+        + risk_bit
         + price_bit
     )
     if note:
         lines.append(_paint(f"Note: {note}", color, "dim"))
     lines.append("")
+
+    if analysis.thesis:
+        lines.append(_paint("Read", color, "bold"))
+        lines.extend("  " + ln for ln in _wrap(analysis.thesis, 76))
+        lines.append("")
 
     lines.append(_paint("Dimensions", color, "bold"))
     for dim in analysis.dimensions:
@@ -118,6 +147,27 @@ def render_analysis(analysis: Analysis, *, color: bool = True, note: Optional[st
         meter = _paint(_bar(dim.score), color, col)
         lines.append(f"  {dim.name:<18} {meter} {_fmt_score(dim.score)}")
     lines.append("")
+
+    if analysis.strengths or analysis.concerns:
+        if analysis.strengths:
+            lines.append(_paint("Strengths", color, "bold"))
+            for s in analysis.strengths:
+                lines.append("  " + _paint(f"+ {s}", color, "green"))
+        if analysis.concerns:
+            lines.append(_paint("Concerns", color, "bold"))
+            for c in analysis.concerns:
+                lines.append("  " + _paint(f"- {c}", color, "red"))
+        lines.append("")
+
+    if analysis.risk is not None and analysis.risk.factors:
+        risk_col = _RISK_COLORS.get(analysis.risk.level, "yellow")
+        lines.append(
+            _paint("Risk factors ", color, "bold")
+            + _paint(f"[{analysis.risk.level}]", color, risk_col)
+        )
+        for factor in analysis.risk.factors[:4]:
+            lines.append("  " + _paint(f"! {factor}", color, risk_col))
+        lines.append("")
 
     if analysis.signals:
         lines.append(_paint("Signals", color, "bold"))
